@@ -1,0 +1,6 @@
+<launch>
+
+    <node pkg="llam" type="lidar_feature" name="lidar_feature" output="screen">
+    </node>
+
+</launch>
