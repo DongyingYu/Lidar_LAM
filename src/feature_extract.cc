@@ -15,6 +15,11 @@ FeatureExtract::FeatureExtract() {
 }
 
 void FeatureExtract::init(){
+    corner_feature_sharp_.reset(new pcl::PointCloud<PointType>());
+    corner_feature_less_sharp_.reset(new pcl::PointCloud<PointType>());
+    surface_feature_flat_.reset(new pcl::PointCloud<PointType>());
+    surface_feature_less_flat_.reset(new pcl::PointCloud<PointType>());
+
     cloud_curvature_ = new float[40000];
     cloud_sort_id_ = new int[40000];
     cloud_neighbor_picked_ = new int[40000];
@@ -113,7 +118,7 @@ void FeatureExtract::cloudDevideToScan(const pcl::PointCloud<pcl::PointXYZ> &poi
             }
             
         }
-        float cur_period_time = (cur_angle - start_angle_) / (end_angle_ - cur_angle);
+        float cur_period_time = (cur_angle - start_angle_) / (end_angle_ - start_angle_);
         point.intensity = scan_id + scan_period * cur_period_time;
         cloud_scan[scan_id].push_back(point);
 
@@ -146,7 +151,8 @@ pcl::PointCloud<PointType>::Ptr FeatureExtract::getCombineCloud(){
 
 void FeatureExtract::computeCurvature(){
 
-    for(int i = 5 ; i < real_cloud_size_; ++i){
+    for(int i = 5 ; i < real_cloud_size_ - 5; ++i){
+        std::unique_lock<std::mutex> lock(mutex_cloud_);
         float diff_x = combine_cloud_->points[i-5].x + combine_cloud_->points[i-4].x + combine_cloud_->points[i-3].x +
                        combine_cloud_->points[i-2].x + combine_cloud_->points[i-1].x - 10 * combine_cloud_->points[i].x +
                        combine_cloud_->points[i+1].x + combine_cloud_->points[i+2].x + combine_cloud_->points[i+3].x +
@@ -172,7 +178,7 @@ void FeatureExtract::computeCurvature(){
 void FeatureExtract::extractFeature(){
     ROS_INFO("Run the extractFeature function. ");
     for(int i=0; i < num_scan; ++i){
-        // std::unique_lock<std::mutex> lock(mutex_features_);
+        std::unique_lock<std::mutex> lock(mutex_features_);
         // 若scan中点过少，放弃对该scan提取特征
         if(scan_end_id_[i] - scan_start_id_[i] < 6)
             continue;
@@ -180,6 +186,7 @@ void FeatureExtract::extractFeature(){
 
         // 对每个scan分六段进行特征提取
         for(int j = 0; j < 6; ++j){
+            std::unique_lock<std::mutex> lock(mutex_cloud_);
             // 设定每一个局部分段的起始点
             int start_point = scan_start_id_[i] + (scan_end_id_[i] - scan_start_id_[i]) * j / 6;
             int end_point = scan_start_id_[i] + (scan_end_id_[i] - scan_start_id_[i]) * (j + 1) / 6 - 1;
@@ -196,11 +203,11 @@ void FeatureExtract::extractFeature(){
                     largest_picked_num++;
                     if(largest_picked_num <= 2){
                         cloud_label_[index] = 2;
-                        corner_feature_sharp_.push_back(combine_cloud_->points[index]);
-                        corner_feature_less_sharp_.push_back(combine_cloud_->points[index]);
+                        corner_feature_sharp_->push_back(combine_cloud_->points[index]);
+                        corner_feature_less_sharp_->push_back(combine_cloud_->points[index]);
                     }else if(largest_picked_num <= 20){
                         cloud_label_[index] = 1;
-                        corner_feature_less_sharp_.push_back(combine_cloud_->points[index]);
+                        corner_feature_less_sharp_->push_back(combine_cloud_->points[index]);
                     }else{
                         break;
                     }
@@ -236,10 +243,10 @@ void FeatureExtract::extractFeature(){
                 if(cloud_neighbor_picked_[index] == 0 &&
                     cloud_curvature_[index] < 0.1){
                     cloud_label_[index] = -1;
-                    surface_feature_flat_.push_back(combine_cloud_->points[index]);
+                    surface_feature_flat_->push_back(combine_cloud_->points[index]);
 
                     smallest_picked_num++;
-                    if(smallest_picked_num > 4){
+                    if(smallest_picked_num >= 4){
                         break;
                     }
 
@@ -281,18 +288,41 @@ void FeatureExtract::extractFeature(){
             down_filter.setLeafSize(0.2, 0.2, 0.2);
             down_filter.filter(surf_feature_less_flat_scan_downfilter);
 
-            surface_feature_less_flat_ += surf_feature_less_flat_scan_downfilter;
+            *surface_feature_less_flat_ += surf_feature_less_flat_scan_downfilter;
         }
         int corner_feature_size;
-        corner_feature_size = corner_feature_sharp_.points.size();
+        corner_feature_size = corner_feature_sharp_->points.size();
 
+        ROS_INFO("The corner features size: %d", corner_feature_size);
         ROS_INFO("Feature extracted successfully. ");
     }
 }
 
-pcl::PointCloud<PointType> FeatureExtract::getCornerFeature(){
-    pcl::PointCloud<PointType> corner_features;
+pcl::PointCloud<PointType>::Ptr FeatureExtract::getCornerFeature(){
+    pcl::PointCloud<PointType>::Ptr corner_features;
     std::unique_lock<std::mutex> lock(mutex_features_);
     corner_features = corner_feature_sharp_;
     return corner_features;
+}
+
+pcl::PointCloud<PointType>::Ptr FeatureExtract::getCornerFeatureLess(){
+    pcl::PointCloud<PointType>::Ptr corner_features_less;
+    std::unique_lock<std::mutex> lock(mutex_features_);
+    corner_features_less = corner_feature_less_sharp_;
+    return corner_features_less;
+}
+
+pcl::PointCloud<PointType>::Ptr FeatureExtract::getSurfaceFeature(){
+    pcl::PointCloud<PointType>::Ptr surface_features;
+    std::unique_lock<std::mutex> lock(mutex_features_);
+    surface_features = surface_feature_flat_;
+    return surface_features;
+}
+
+
+pcl::PointCloud<PointType>::Ptr FeatureExtract::getSurfaceFeatureLess(){
+    pcl::PointCloud<PointType>::Ptr surface_features_less;
+    std::unique_lock<std::mutex> lock(mutex_features_);
+    surface_features_less = surface_feature_less_flat_;
+    return surface_features_less;
 }

@@ -1,6 +1,14 @@
 <launch>
+    <!-- 不同于VINS-mono系列写法，这里公用一个package文件，故写launch文件要写在一起-->
+    <node pkg="llam" type="lidar_feature" name="lidar_feature"/>
 
-    <node pkg="llam" type="lidar_feature" name="lidar_feature" output="screen">
+    <node pkg="llam" type="lidar_lam" name="lidar_lam" output="screen">
+    	<remap from="/corner_feature_sharp" to="/corner_feature_sharp" />
+	    <remap from="/surface_feature_flat" to="/surface_feature_flat" />
+	    <remap from="/combine_cloud" to="/combine_cloud" />
     </node>
+
+    <!-- rviz文件中，将延迟时间设置非常大，可显示出地图全貌，若需保存地图，需再建立一个村塾数据的类型-->
+    <node name="rviz" pkg="rviz" type="rviz" output="log" args="-d $(find llam)/rviz/rviz.rviz" />
 
 </launch>

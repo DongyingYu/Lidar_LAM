@@ -41,31 +41,31 @@ template <typename PointT>
 void filterCloseDistance(const pcl::PointCloud<PointT> &input_cloud,
                          pcl::PointCloud<PointT> &output_cloud, float thres)
 {
-    if (&output_cloud != &input_cloud)
+    if (&input_cloud != &output_cloud)
     {
         output_cloud.header = input_cloud.header;
         output_cloud.points.resize(input_cloud.points.size());
     }
 
-    size_t cloud_size = 0;
+    size_t cloud_cnt = 0;
     for (size_t i = 0; i < input_cloud.points.size(); ++i)
     {
-        if (input_cloud.points[i].x * input_cloud.points[i].x + input_cloud.points[i].y * input_cloud[i].y +
-                input_cloud.points[i].z * input_cloud[i].z <
+        if (input_cloud.points[i].x * input_cloud.points[i].x + input_cloud.points[i].y * input_cloud.points[i].y +
+                input_cloud.points[i].z * input_cloud.points[i].z <
             thres * thres)
         {
             continue;
         }
-        output_cloud.points[cloud_size] = input_cloud.points[i];
-        cloud_size++;
+        output_cloud.points[cloud_cnt] = input_cloud.points[i];
+        cloud_cnt++;
     }
 
-    if (cloud_size != input_cloud.points.size())
+    if (cloud_cnt != input_cloud.points.size())
     {
-        output_cloud.points.resize(cloud_size);
+        output_cloud.points.resize(cloud_cnt);
     }
     output_cloud.height = 1;
-    output_cloud.width = static_cast<uint32_t>(cloud_size);
+    output_cloud.width = static_cast<uint32_t>(cloud_cnt);
     output_cloud.is_dense = true;
 }
 
@@ -117,7 +117,22 @@ public:
     /**
    * @brief 获取角点特征
    */
-    pcl::PointCloud<PointType> getCornerFeature();
+    pcl::PointCloud<PointType>::Ptr getCornerFeature();
+
+    /**
+   * @brief 获取less角点特征
+   */
+    pcl::PointCloud<PointType>::Ptr getCornerFeatureLess();
+
+    /**
+   * @brief 获取平面特征
+   */
+    pcl::PointCloud<PointType>::Ptr getSurfaceFeature();
+
+    /**
+   * @brief 获取less平面特征
+   */
+    pcl::PointCloud<PointType>::Ptr getSurfaceFeatureLess();
 
 public:
     float start_angle_;
@@ -140,8 +155,8 @@ public:
 
     std::mutex mutex_features_;
     // 特征存储变量，同可写成Ptr形式，需要在init()中做初始化
-    pcl::PointCloud<PointType> corner_feature_sharp_;
-    pcl::PointCloud<PointType> corner_feature_less_sharp_;
-    pcl::PointCloud<PointType> surface_feature_flat_;
-    pcl::PointCloud<PointType> surface_feature_less_flat_;
+    pcl::PointCloud<PointType>::Ptr corner_feature_sharp_;
+    pcl::PointCloud<PointType>::Ptr corner_feature_less_sharp_;
+    pcl::PointCloud<PointType>::Ptr surface_feature_flat_;
+    pcl::PointCloud<PointType>::Ptr surface_feature_less_flat_;
 };

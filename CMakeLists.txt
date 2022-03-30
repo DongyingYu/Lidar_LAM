@@ -13,7 +13,8 @@ find_package(catkin REQUIRED COMPONENTS
     pcl_ros
 )
 
-find_package(PCL REQUIRED)
+find_package(PCL 1.8 REQUIRED)
+find_package(Eigen3)
 find_package(OpenCV REQUIRED)
 
 catkin_package(
@@ -25,6 +26,7 @@ include_directories(
     ${catkin_INCLUDE_DIRS}
     ${PCL_INCLUDE_DIRS}
     ${CERES_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIR}
 )
 
 catkin_package(
@@ -38,3 +40,15 @@ add_executable(lidar_feature
     src/feature_extract.cc
 )
 target_link_libraries(lidar_feature ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+
+add_executable(lidar_lam 
+    src/lam_ros.cc
+    src/third_lib.cc
+    src/third_lib.h
+    src/localization_and_mapping.cc
+    src/utils.cc
+    src/utils.h
+    src/basic_data.cc
+    src/basic_data.h
+)
+target_link_libraries(lidar_lam ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
