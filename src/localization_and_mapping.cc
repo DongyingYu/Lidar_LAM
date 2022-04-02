@@ -66,7 +66,7 @@ void SlidingWindowOpti::push_voxel(vector<vector<Eigen::Vector3d> *> &plvec_orig
         }
     }
 
-    // Only one scan
+    // 若只有一帧点云数据
     if (process_points_size <= 1)
     {
         return;
@@ -80,12 +80,12 @@ void SlidingWindowOpti::push_voxel(vector<vector<Eigen::Vector3d> *> &plvec_orig
 
     vector<Eigen::Vector3d> *plvec_voxel = new vector<Eigen::Vector3d>();
 
-    // Frame num in sliding window for each point in "plvec_voxel"
+    // 记录plvec_voxel中每一个点所在滑动窗口中的帧数
     vector<int> *slwd_num = new vector<int>();
     plvec_voxel->reserve(filternum2use * sw_size_);
     slwd_num->reserve(filternum2use * sw_size_);
 
-    // retain one point for one scan (you can modify)
+    // 一次扫描只保留一个点(可做修改)
     for (int i = 0; i < sw_size_; i++)
     {
         if (!plvec_orig[i]->empty())
@@ -94,7 +94,7 @@ void SlidingWindowOpti::push_voxel(vector<vector<Eigen::Vector3d> *> &plvec_orig
         }
     }
 
-    // Push a voxel into optimizer
+    // 将网格地图数据放入优化器
     plvec_voxels_.push_back(plvec_voxel);
     sw_nums_.push_back(slwd_num);
     lam_types_.push_back(lam_type);
@@ -110,67 +110,69 @@ void SlidingWindowOpti::acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector
     Eigen::MatrixXd _hess(Hess);
     Eigen::MatrixXd _jact(JacT);
 
-    // In program, lambda_0 < lambda_1 < lambda_2
-    // For plane, the residual is lambda_0
-    // For line, the residual is lambda_0+lambda_1
-    // We only calculate lambda_1 here
+    // 在程序设计中, lambda_0 < lambda_1 < lambda_2，
+    // 对于平面特征，残差为：lambda_0,对于线特征，残差为：lambda_0+lambda_1
+    // 此处仅计算：lambda_1
     for (int a = head; a < end; a++)
     {
-        uint k = lam_types_[a]; // 0 is surf, 1 is line
+        // 0:平面特征, 1:线特征
+        uint k = lam_types_[a]; 
         SigmaVector &sig_vec = sig_vecs_[a];
         vector<Eigen::Vector3d> &plvec_voxel = *plvec_voxels_[a];
-        // Position in slidingwindow for each point in "plvec_voxel"
+        // 获取plvec_voxel中的点在滑动窗口中的位置
         vector<int> &slwd_num = *sw_nums_[a];
         uint backnum = plvec_voxel.size();
 
         Eigen::Vector3d vec_tran;
         vector<Eigen::Vector3d> plvec_back(backnum);
-        // derivative point to T (R, t)
+        // 对T (R, t)求导结果，即为论文中矩阵D的结果
         vector<Eigen::Matrix3d> point_xis(backnum);
         Eigen::Vector3d centor(Eigen::Vector3d::Zero());
-        Eigen::Matrix3d covMat(Eigen::Matrix3d::Zero());
+        Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
 
         for (uint i = 0; i < backnum; i++)
         {
             vec_tran = so3_ps[slwd_num[i]].matrix() * plvec_voxel[i];
-            // left multiplication instead of right muliplication in paper
+            // 使用左乘代替右乘
             point_xis[i] = -SO3::hat(vec_tran);
-            plvec_back[i] = vec_tran + t_ps[slwd_num[i]]; // after trans
-
+            // 转换之后
+            plvec_back[i] = vec_tran + t_ps[slwd_num[i]]; 
             centor += plvec_back[i];
-            covMat += plvec_back[i] * plvec_back[i].transpose();
+            cov_mat += plvec_back[i] * plvec_back[i].transpose();
         }
 
         double N_points = backnum + sig_vec.sigma_size_;
         centor += sig_vec.sigma_vi_;
-        covMat += sig_vec.sigma_vTv_;
+        cov_mat += sig_vec.sigma_vTv_;
 
-        covMat = covMat - centor * centor.transpose() / N_points;
-        covMat = covMat / N_points;
+        cov_mat = cov_mat - centor * centor.transpose() / N_points;
+        cov_mat = cov_mat / N_points;
         centor = centor / N_points;
 
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
         Eigen::Vector3d eigen_value = saes.eigenvalues();
 
         Eigen::Matrix3d U = saes.eigenvectors();
-        Eigen::Vector3d u[3]; // eigenvectors
+        // 存储特征向量
+        Eigen::Vector3d u[3];
         for (int j = 0; j < 3; j++)
         {
             u[j] = U.block<3, 1>(0, j);
         }
 
-        // Jacobian matrix
+        // 雅克比矩阵
         Eigen::Matrix3d ukukT = u[k] * u[k].transpose();
         Eigen::Vector3d vec_Jt;
         for (uint i = 0; i < backnum; i++)
         {
             plvec_back[i] = plvec_back[i] - centor;
+            // 因这里计算是考虑到所有点的情况，故与前述有所不同
             vec_Jt = 2.0 / N_points * ukukT * plvec_back[i];
             _jact.block<3, 1>(6 * slwd_num[i] + 3, 0) += vec_Jt;
             _jact.block<3, 1>(6 * slwd_num[i], 0) -= point_xis[i] * vec_Jt;
         }
 
-        // Hessian matrix
+        // 海森矩阵
         Eigen::Matrix3d Hessian33;
         Eigen::Matrix3d C_k;
         vector<Eigen::Matrix3d> C_k_np(3);
@@ -182,7 +184,7 @@ void SlidingWindowOpti::acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector
                 continue;
             }
             Hessian33 = u[i] * u[k].transpose();
-            // part of F matrix in paper
+            // 论文中F矩阵的某一部分
             C_k_np[i] = -1.0 / N_points / (eigen_value[i] - eigen_value[k]) * (Hessian33 + Hessian33.transpose());
         }
 
@@ -196,7 +198,7 @@ void SlidingWindowOpti::acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector
             }
             C_k = U * C_k;
             colnum = 6 * slwd_num[j];
-            // block matrix operation, half Hessian matrix
+            // 矩阵块运算, 对照论文中公式(7)
             for (uint i = j; i < backnum; i++)
             {
                 Hessian33 = u[k] * (plvec_back[i]).transpose() * C_k + u[k].dot(plvec_back[i]) * C_k;
@@ -210,9 +212,10 @@ void SlidingWindowOpti::acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector
                 {
                     Hessian33 -= 1.0 / N_points * ukukT;
                 }
-                Hessian33 = 2.0 / N_points * Hessian33; // Hessian matrix of lambda and point
+                // 关于lambda及地图点的海森矩阵
+                Hessian33 = 2.0 / N_points * Hessian33; 
 
-                // Hessian matrix of lambda and pose
+                // 关于lambda及位姿的海森矩阵
                 if (rownum == colnum && i != j)
                 {
                     _hess.block<3, 3>(rownum + 3, colnum + 3) += Hessian33 + Hessian33.transpose();
@@ -239,13 +242,14 @@ void SlidingWindowOpti::acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector
 
         if (k == 1)
         {
-            // add weight for line feature
+            // 对线特征添加权重
             residual += corn_less_ * eigen_value[k];
             Hess += corn_less_ * _hess;
             JacT += corn_less_ * _jact;
         }
         else
         {
+            // 对平面特征添加权重
             residual += eigen_value[k];
             Hess += _hess;
             JacT += _jact;
@@ -276,6 +280,7 @@ void SlidingWindowOpti::divide_thread(vector<SO3> &so3_ps, vector<Eigen::Vector3
     vector<double> resis(thd_num_, 0);
 
     uint gps_size = plvec_voxels_.size();
+    // 如果gps_size较小，只需要一个线程处理即可
     if (gps_size < (uint)thd_num_)
     {
         acc_t_evaluate(so3_ps, t_ps, 0, gps_size, Hess, JacT, residual);
@@ -292,7 +297,8 @@ void SlidingWindowOpti::divide_thread(vector<SO3> &so3_ps, vector<Eigen::Vector3
     {
         int np = part * i;
         int nn = part * (i + 1);
-
+        // 默认传参是拷贝形式，这里需要传引用形式，使用std::ref()
+        // 比如thread的方法传递引用的时候，必须外层用ref来进行引用传递，否则就是浅拷贝
         mthreads[i] = new thread(&SlidingWindowOpti::acc_t_evaluate, this, ref(so3_ps), ref(t_ps), np, nn, ref(hessians[i]), ref(jacobians[i]), ref(resis[i]));
     }
 
@@ -321,23 +327,23 @@ void SlidingWindowOpti::evaluate_only_residual(vector<SO3> &so3_ps, vector<Eigen
         uint backnum = plvec_voxel.size();
 
         Eigen::Vector3d centor(Eigen::Vector3d::Zero());
-        Eigen::Matrix3d covMat(Eigen::Matrix3d::Zero());
+        Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
 
         for (uint i = 0; i < backnum; i++)
         {
             vec_tran = so3_ps[slwd_num[i]].matrix() * plvec_voxel[i] + t_ps[slwd_num[i]];
             centor += vec_tran;
-            covMat += vec_tran * vec_tran.transpose();
+            cov_mat += vec_tran * vec_tran.transpose();
         }
 
         double N_points = backnum + sig_vec.sigma_size_;
         centor += sig_vec.sigma_vi_;
-        covMat += sig_vec.sigma_vTv_;
+        cov_mat += sig_vec.sigma_vTv_;
 
-        covMat = covMat - centor * centor.transpose() / N_points;
-        covMat = covMat / N_points;
+        cov_mat = cov_mat - centor * centor.transpose() / N_points;
+        cov_mat = cov_mat / N_points;
 
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
         Eigen::Vector3d eigen_value = saes.eigenvalues();
 
         if (k == 1)
@@ -351,6 +357,7 @@ void SlidingWindowOpti::evaluate_only_residual(vector<SO3> &so3_ps, vector<Eigen
     }
 }
 
+// 所采用的优化思想及步骤与scan2map模块相同
 void SlidingWindowOpti::damping_iter()
 {
     my_mutex_.lock();
@@ -382,15 +389,14 @@ void SlidingWindowOpti::damping_iter()
     {
         if (is_calc_hess)
         {
-            // calculate Hessian, Jacobian, residual
+            // 计算海森矩阵、雅克比矩阵及残差
             divide_thread(so3_poses_, t_poses_, Hess, JacT, residual1);
         }
 
         D = Hess.diagonal().asDiagonal();
         Hess2 = Hess + u * D;
 
-        // The eigen solver is slower than opencv solver
-
+        // eigen中求解器要比opencv中求解方式慢一些
         // dxi = (Hess2).bdcSvd(Eigen::ComputeFullU|Eigen::ComputeFullV).solve(-JacT);
         for (int j = 0; j < jac_leng_; j++)
         {
@@ -408,12 +414,11 @@ void SlidingWindowOpti::damping_iter()
 
         for (int j = 0; j < sw_size_; j++)
         {
-            // left multiplication
+            // 左乘形式
             so3_poses_temp_[j] = SO3::exp(dxi.block<3, 1>(6 * (j), 0)) * so3_poses_[j];
             t_poses_temp_[j] = t_poses_[j] + dxi.block<3, 1>(6 * (j) + 3, 0);
         }
 
-        // LM
         double q1 = 0.5 * (dxi.transpose() * (u * D * dxi - JacT))[0];
         // double q1 = 0.5*dxi.dot(u*D*dxi-JacT);
         evaluate_only_residual(so3_poses_temp_, t_poses_temp_, residual2);
@@ -497,27 +502,27 @@ OctoTree::OctoTree(int ft, int capa) : ftype_(ft), capacity_(capa)
 
 void OctoTree::calc_eigen()
 {
-    Eigen::Matrix3d covMat(Eigen::Matrix3d::Zero());
+    Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
     Eigen::Vector3d center(0, 0, 0);
 
-    uint asize;
+    uint vec_size;
     for (int i = 0; i < OctoTree::voxel_windows_size_; i++)
     {
-        asize = point_vec_tran_[i]->size();
-        for (uint j = 0; j < asize; j++)
+        vec_size = point_vec_tran_[i]->size();
+        for (uint j = 0; j < vec_size; j++)
         {
-            covMat += (*point_vec_tran_[i])[j] * (*point_vec_tran_[i])[j].transpose();
+            cov_mat += (*point_vec_tran_[i])[j] * (*point_vec_tran_[i])[j].transpose();
             center += (*point_vec_tran_[i])[j];
         }
     }
 
-    covMat += sig_vec_.sigma_vTv_;
+    cov_mat += sig_vec_.sigma_vTv_;
     center += sig_vec_.sigma_vi_;
     center /= points_size_;
 
-    covMat = covMat / points_size_ - center * center.transpose();
+    cov_mat = cov_mat / points_size_ - center * center.transpose();
 
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
     feat_eigen_ratio_ = saes.eigenvalues()[2] / saes.eigenvalues()[ftype_];
     Eigen::Vector3d direct_vec = saes.eigenvectors().col(2 * ftype_);
 
@@ -546,7 +551,8 @@ void OctoTree::recut(int layer, uint frame_head, pcl::PointCloud<PointType> &pl_
             return;
         }
 
-        calc_eigen(); // calculate eigenvalue ratio
+        // 计算特征值比率
+        calc_eigen();
 
         if (isnan(feat_eigen_ratio_))
         {
@@ -572,12 +578,12 @@ void OctoTree::recut(int layer, uint frame_head, pcl::PointCloud<PointType> &pl_
     }
 
     int leafnum;
-    uint a_size;
+    uint vec_size;
 
     for (int i = frame_head; i < OctoTree::voxel_windows_size_; i++)
     {
-        a_size = point_vec_tran_[i]->size();
-        for (uint j = 0; j < a_size; j++)
+        vec_size = point_vec_tran_[i]->size();
+        for (uint j = 0; j < vec_size; j++)
         {
             int xyz[3] = {0, 0, 0};
             for (uint k = 0; k < 3; k++)
@@ -728,24 +734,24 @@ void OctoTree::marginalize(int layer, int margi_size, vector<Eigen::Quaterniond>
 
 void OctoTree::traversal_opt_calc_eigen()
 {
-    Eigen::Matrix3d covMat(Eigen::Matrix3d::Zero());
+    Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
     Eigen::Vector3d center(0, 0, 0);
 
-    uint asize;
+    uint vec_size;
     for (int i = 0; i < OctoTree::voxel_windows_size_; i++)
     {
-        asize = point_vec_tran_[i]->size();
-        for (uint j = 0; j < asize; j++)
+        vec_size = point_vec_tran_[i]->size();
+        for (uint j = 0; j < vec_size; j++)
         {
-            covMat += (*point_vec_tran_[i])[j] * (*point_vec_tran_[i])[j].transpose();
+            cov_mat += (*point_vec_tran_[i])[j] * (*point_vec_tran_[i])[j].transpose();
             center += (*point_vec_tran_[i])[j];
         }
     }
 
-    covMat -= center * center.transpose() / sw_points_size_;
-    covMat /= sw_points_size_;
+    cov_mat -= center * center.transpose() / sw_points_size_;
+    cov_mat /= sw_points_size_;
 
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
     feat_eigen_ratio_test_ = (saes.eigenvalues()[2] / saes.eigenvalues()[ftype_]);
 }
 
@@ -812,25 +818,32 @@ void VoxelDistance::evaluate_para(SO3 &so3_p, Eigen::Vector3d &t_p, Eigen::Matri
     uint a_size = surf_gather_.size();
     for (uint i = 0; i < a_size; i++)
     {
+        // 由平面的方向向量获得雅克比矩阵，对照论文中公式(10)～(12)，这里_jac的计算形式有所简化
         Eigen::Matrix3d _jac = surf_direct_[i] * surf_direct_[i].transpose();
         Eigen::Vector3d vec_tran = so3_p.matrix() * surf_gather_[i];
         Eigen::Matrix3d point_xi = -SO3::hat(vec_tran);
         vec_tran += t_p;
-
+        // 经位姿转换后的点与特征中心的偏差向量
         Eigen::Vector3d v_ac = vec_tran - surf_centor_[i];
+        // 定义三维的误差向量，雅克比乘以误差项，得到残差向量
         Eigen::Vector3d d_vec = _jac * v_ac;
         Eigen::Matrix<double, 3, 6> jacob;
+        // 对照论文中公式，雅克比矩阵块所对应的计算方法
         jacob.block<3, 3>(0, 0) = _jac * point_xi;
         jacob.block<3, 3>(0, 3) = _jac;
 
+        // 残差项的计算方法，每个残差项均有其对应的系数
         residual += surf_coeffs_[i] * d_vec.dot(d_vec);
+        // 海森矩阵与雅克比矩阵近似关系，H=J^T * J
         Hess += surf_coeffs_[i] * jacob.transpose() * jacob;
+        // H * delte_x = g, 这里计算的是增量g
         g += surf_coeffs_[i] * jacob.transpose() * d_vec;
     }
 
     a_size = corn_gather_.size();
     for (uint i = 0; i < a_size; i++)
     {
+        // 对于corn特征，其_jac的计算方式不同，其余部分相同
         Eigen::Matrix3d _jac = Eigen::Matrix3d::Identity() - corn_direct_[i] * corn_direct_[i].transpose();
         Eigen::Vector3d vec_tran = so3_p.matrix() * corn_gather_[i];
         Eigen::Matrix3d point_xi = -SO3::hat(vec_tran);
@@ -892,13 +905,15 @@ void VoxelDistance::damping_iter()
     cv::Mat matB(6, 1, CV_64F, cv::Scalar::all(0));
     cv::Mat matX(6, 1, CV_64F, cv::Scalar::all(0));
 
+    // 最多执行20次迭代求解，当残差项满足要求是退出循环
     for (int i = 0; i < 20; i++)
     {
         evaluate_para(so3_pose_, t_pose_, Hess, g, residual1);
+        // D为系数矩阵，为非负对角阵
         D = Hess.diagonal().asDiagonal();
-
+        // LM求解的矩阵方程形式
         // dxi = (Hess + u*D).bdcSvd(Eigen::ComputeFullU | Eigen::ComputeFullV).solve(-g);
-
+        // 构造矩阵方程的求解形式
         Hess2 = Hess + u * D;
         for (int j = 0; j < 6; j++)
         {
@@ -908,6 +923,9 @@ void VoxelDistance::damping_iter()
                 matA.at<double>(j, f) = Hess2(j, f);
             }
         }
+        // OpenCV中求解非线性最小二乘问题的方法，采用QR分解的方式
+        // 使用opencv中的求解方式，比使用g2o或ceres要简便一些，但是总体思路是一样了的，
+        // 这里需要手动构建残差项，设计优化步长进行逐次求解迭代；
         cv::solve(matA, matB, matX, cv::DECOMP_QR);
         for (int j = 0; j < 6; j++)
         {
@@ -916,10 +934,16 @@ void VoxelDistance::damping_iter()
 
         so3_temp_ = SO3::exp(dxi.block<3, 1>(0, 0)) * so3_pose_;
         t_temp_ = t_pose_ + dxi.block<3, 1>(3, 0);
+        // 对新求出的位姿评估残差情况
         evaluate_only_residual(so3_temp_, t_temp_, residual2);
+        // 使用q/q1来刻画近似程度的好坏，LM算法中详细给出
+        // 求解出来的x值，点乘(步长*系数矩阵*x时刻值，减去g),其含义即是求解出相对增量
         double q1 = dxi.dot(u * D * dxi - g);
+        // residual1 residual2表征两时刻的位姿数据
         double q = residual1 - residual2;
         // printf("residual: %lf u: %lf v: %lf q: %lf %lf %lf\n", residual1, u, v, q/q1, q1, q);
+        // 不断更新优化半径
+        // q大于0,说明求解有效，减小迭代步长，细化计算结果
         if (q > 0)
         {
             so3_pose_ = so3_temp_;
@@ -931,6 +955,7 @@ void VoxelDistance::damping_iter()
         }
         else
         {
+            // 如果残差之差为负数，增大步长
             u = u * v;
             v = 2 * v;
         }

@@ -32,31 +32,79 @@ class SlidingWindowOpti
 {
 public:
     SlidingWindowOpti(int ss, int fn, int thnum);
-    // Used by "push_voxel"
+
+    /**
+   * @brief 对当前滑窗中某帧原始点云数据做下采样处理
+   * @param[in] 原始三维点
+   * @param[in] 帧id
+   * @param[out] 滤波处理后的网格点
+   * @param[out] 存储当前帧id
+   * @param[in] 滤波数量
+   * @return void 
+   */
     void downsample(vector<Eigen::Vector3d> &plvec_orig, int cur_frame, vector<Eigen::Vector3d> &plvec_voxel,
                     vector<int> &slwd_num, int filternum2use);
 
     // Push voxel into optimizer
     void push_voxel(vector<vector<Eigen::Vector3d> *> &plvec_orig, SigmaVector &sig_vec, int lam_type);
 
-    // Calculate Hessian, Jacobian, residual
+    /**
+   * @brief 以更为精确的方式计算海森矩阵、雅克比矩阵及残差
+   * @param[in] 旋转
+   * @param[in] 平移
+   * @param[in] 起始位置索引
+   * @param[in] 结束位置索引
+   * @param[out] 海森矩阵
+   * @param[out] 雅克比矩阵
+   * @param[out] 残差值
+   * @return void 
+   */
     void acc_t_evaluate(vector<SO3> &so3_ps, vector<Eigen::Vector3d> &t_ps, int head, int end, Eigen::MatrixXd &Hess,
                         Eigen::VectorXd &JacT, double &residual);
 
-    // Multithread for "acc_t_evaluate"
+    /**
+   * @brief 采用多线程方式计算海森矩阵、雅克比矩阵及残差
+   * @param[in] 旋转
+   * @param[in] 平移
+   * @param[out] 海森矩阵
+   * @param[out] 雅克比矩阵
+   * @param[out] 残差值
+   * @return void 
+   */
     void divide_thread(vector<SO3> &so3_ps, vector<Eigen::Vector3d> &t_ps, Eigen::MatrixXd &Hess,
                        Eigen::VectorXd &JacT, double &residual);
 
-    // Calculate residual
+    /**
+   * @brief 计算残差
+   * @param[in] 旋转
+   * @param[in] 平移
+   * @param[out] 残差值
+   * @return void 
+   */
     void evaluate_only_residual(vector<SO3> &so3_ps, vector<Eigen::Vector3d> &t_ps, double &residual);
 
-    // LM process
+    /**
+   * @brief 采用滑窗非线性LM优化方式优化位姿，以构建较高精度地图
+   * @return void 
+   */
     void damping_iter();
 
+    /**
+   * @brief 读取地图优化状态
+   * @return int 
+   */
     int read_refine_state();
 
+    /**
+   * @brief 设置地图优化状态
+   * @return void 
+   */
     void set_refine_state(int tem);
 
+    /**
+   * @brief 销毁体素网格指针及数据
+   * @return void 
+   */
     void free_voxel();
 
 public:
@@ -76,6 +124,7 @@ public:
     vector<SigmaVector> sig_vecs_;
     vector<vector<Eigen::Vector3d> *> plvec_voxels_;
     vector<vector<int> *> sw_nums_;
+    // 2：表示优化已完成； 0：表示可以执行优化；1：正在执行优化
     int map_refine_flag_;
     mutex my_mutex_;
 };
@@ -85,30 +134,43 @@ class OctoTree
 public:
     OctoTree(int ft, int capa);
 
-    // 用在recut()函数中 计算特征值比
-    // Used by "recut"
+    /**
+   * @brief 用在recut()函数中 计算特征值比
+   * @return void 
+   */
     void calc_eigen();
 
-    // 将网格划分为更细的特征
-    // frame_head: 滑动窗口中最新scan的位置
+    /**
+   * @brief 将网格划分为更细的特征
+   * @param[in] 八叉树划分的层数
+   * @param[in] frame_head: 滑动窗口中最新scan的位置
+   * @param[in] 根中心向量参数
+   * @return void 
+   */
     void recut(int layer, uint frame_head, pcl::PointCloud<PointType> &pl_feat_map);
 
     // 将滑动窗口中的五个scan边缘化掉 (assume margi_size is 5)
     void marginalize(int layer, int margi_size, vector<Eigen::Quaterniond> &q_poses, vector<Eigen::Vector3d> &t_poses,
                      int window_base, pcl::PointCloud<PointType> &pl_feat_map);
 
-    // Used by "traversal_opt"
+    /**
+   * @brief 计算特征值、特征向量及特征比率，针对于每个滑窗中的点来计算
+   * @return void 
+   */
     void traversal_opt_calc_eigen();
 
-    // Push voxel into "opt_lsv" (LM optimizer)
-    // Push voxel into "opt_lsv" (LM optimizer)
+    /**
+   * @brief 将网格地图放入优化器
+   * @param[in] LM非线性优化对象句柄
+   * @return void 
+   */
     void traversal_opt(SlidingWindowOpti &opt_lsv);
 
 public:
     static int voxel_windows_size_;
     vector<PointVector *> point_vec_orig_;
     vector<PointVector *> point_vec_tran_;
-    // 0 ：树的末端，1：非末端
+    // 0 ：树的终点，1：非终点
     int octo_state_;
     PointVector sig_vec_points_;
     SigmaVector sig_vec_;
@@ -128,14 +190,50 @@ public:
 class VoxelDistance
 {
 public:
+    /**
+   * @brief 将平面特征放入优化器
+   * @param[in] 原始点
+   * @param[in] 特征中心向量
+   * @param[in] 平面特征法向向量
+   * @param[in] 特征权重系数
+   * @return void 
+   */
     void push_surf(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff);
 
+    /**
+   * @brief 将角点特征放入优化器
+   * @param[in] 原始点
+   * @param[in] 特征中心向量
+   * @param[in] 线特征方向向量
+   * @param[in] 特征权重系数
+   * @return void 
+   */
     void push_line(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff);
 
+    /**
+   * @brief 计算目标函数的优化更新参数
+   * @param[in] 位姿旋转
+   * @param[in] 位姿平移
+   * @param[out] 海森矩阵
+   * @param[out] 优化增量
+   * @param[out] 残差值
+   * @return void 
+   */
     void evaluate_para(SO3 &so3_p, Eigen::Vector3d &t_p, Eigen::Matrix<double, 6, 6> &Hess, Eigen::Matrix<double, 6, 1> &g, double &residual);
 
+    /**
+   * @brief 计算目标函数的优化更新参数
+   * @param[in] 位姿旋转
+   * @param[in] 位姿平移
+   * @param[out] 残差值
+   * @return void 
+   */
     void evaluate_only_residual(SO3 &so3_p, Eigen::Vector3d &t_p, double &residual);
 
+    /**
+   * @brief 阻尼优化方式进行位姿优化，采用LM优化算法
+   * @return void 
+   */
     void damping_iter();
 
 public:
