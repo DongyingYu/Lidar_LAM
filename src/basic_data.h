@@ -30,14 +30,14 @@ using namespace std;
    *        因在unordered_map中存世我们自定义类型数据，
    *        故这里需要对==运算符进行重载
    */
-class VoxelStrcuture
+class VoxelStructure
 {
 public:
     int64_t x_, y_, z_;
 
-    VoxelStrcuture(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0);
+    VoxelStructure(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0);
     // 运算符重载
-    bool operator==(const VoxelStrcuture &other) const
+    bool operator==(const VoxelStructure &other) const
     {
         return (x_ == other.x_ && y_ == other.y_ && z_ == other.z_);
     }
@@ -53,9 +53,9 @@ namespace std
 {
     // 模板专门化，模板声明中不包含模板参数，所有模板参数均以指定好，<>中没有剩余参数
     template <>
-    struct hash<VoxelStrcuture>
+    struct hash<VoxelStructure>
     {
-        size_t operator()(const VoxelStrcuture &s) const
+        size_t operator()(const VoxelStructure &s) const
         {
             using std::hash;
             using std::size_t;

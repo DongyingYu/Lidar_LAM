@@ -7,15 +7,16 @@
  *
  * @copyright Copyright (c) 2022
  */
-#include "localization_and_mapping.h"
-#include <ros/ros.h>
-#include "paramaters.h"
+
+#include "lam_process.h"
+#include "parameters.h"
+
+// 建立点云特征数据存储队列
+queue<sensor_msgs::PointCloud2ConstPtr> corner_feature_buf;
+queue<sensor_msgs::PointCloud2ConstPtr> surface_feature_buf;
+queue<sensor_msgs::PointCloud2ConstPtr> combine_cloud_buf;
 
 std::mutex mutex_data_buf;
-
-queue<sensor_msgs::PointCloud2ConstPtr> corn_buf;
-queue<sensor_msgs::PointCloud2ConstPtr> surf_buf;
-queue<sensor_msgs::PointCloud2ConstPtr> full_buf;
 
 /**
    * @brief 点、平面特征及完整点云的回调函数
@@ -25,82 +26,22 @@ queue<sensor_msgs::PointCloud2ConstPtr> full_buf;
 void cornerFeatureHandler(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
     mutex_data_buf.lock();
-    corn_buf.push(msg);
+    corner_feature_buf.push(msg);
     mutex_data_buf.unlock();
 }
 
 void surfaceFeatureHandler(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
     mutex_data_buf.lock();
-    surf_buf.push(msg);
+    surface_feature_buf.push(msg);
     mutex_data_buf.unlock();
 }
 
 void combineCloudHandler(const sensor_msgs::PointCloud2ConstPtr &msg)
 {
     mutex_data_buf.lock();
-    full_buf.push(msg);
+    combine_cloud_buf.push(msg);
     mutex_data_buf.unlock();
-}
-
-/**
-   * @brief 将激光雷达点云做网格化处理
-   * @param[in] 管理网格地图的哈希表数据
-   * @param[in] 当前特征点云
-   * @param[in] 位姿旋转
-   * @param[in] 位姿平移
-   * @param[in] 特征类型，0：surface, 1:corner
-   * @param[in] 在滑窗中所处位置
-   * @param[in] 滑动窗口容量大小，大于windows_size
-   * @return void 
-   */
-void cut_voxel(unordered_map<VoxelStrcuture, OctoTree *> &feat_map, pcl::PointCloud<PointType>::Ptr pl_feat,
-               Eigen::Matrix3d R_p, Eigen::Vector3d t_p, int feattype, int fnum, int capacity)
-{
-    uint plsize = pl_feat->size();
-    for (uint i = 0; i < plsize; i++)
-    {
-        // 将特征点云转换至世界坐标系
-        PointType &p_c = pl_feat->points[i];
-        Eigen::Vector3d pvec_orig(p_c.x, p_c.y, p_c.z);
-        Eigen::Vector3d pvec_tran = R_p * pvec_orig + t_p;
-
-        // 确定哈希表键值
-        float loc_xyz[3];
-        for (int j = 0; j < 3; j++)
-        {
-            loc_xyz[j] = pvec_tran[j] / voxel_size[feattype];
-            if (loc_xyz[j] < 0)
-            {
-                loc_xyz[j] -= 1.0;
-            }
-        }
-        VoxelStrcuture position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
-
-        // 找到对应的网格位置
-        auto iter = feat_map.find(position);
-        if (iter != feat_map.end())
-        {
-            iter->second->point_vec_orig_[fnum]->push_back(pvec_orig);
-            iter->second->point_vec_tran_[fnum]->push_back(pvec_tran);
-            iter->second->is2opt_ = true;
-        }
-        else
-        {
-            // 新建网格数据
-            OctoTree *ot = new OctoTree(feattype, capacity);
-            ot->point_vec_orig_[fnum]->push_back(pvec_orig);
-            ot->point_vec_tran_[fnum]->push_back(pvec_tran);
-
-            // 网格中心坐标
-            ot->voxel_center_[0] = (0.5 + position.x_) * voxel_size[feattype];
-            ot->voxel_center_[1] = (0.5 + position.y_) * voxel_size[feattype];
-            ot->voxel_center_[2] = (0.5 + position.z_) * voxel_size[feattype];
-            // 取边长的四分之一值
-            ot->quater_length_ = voxel_size[feattype] / 4.0;
-            feat_map[position] = ot;
-        }
-    }
 }
 
 int main(int argc, char **argv)
@@ -119,6 +60,11 @@ int main(int argc, char **argv)
     ros::Publisher pub_odom = nh.advertise<nav_msgs::Odometry>("/odom_mark", 10);
     ros::Publisher pub_pose = nh.advertise<geometry_msgs::PoseArray>("/pose_array", 10);
 
+    initialParameters(nh);
+
+    LamProcess::Ptr localizeThread = std::make_shared<LamProcess>();
+
+    // 四元数的几种初始化方式：https://www.cnblogs.com/lovebay/p/13820750.html
     Eigen::Quaterniond q_curr(1, 0, 0, 0);
     Eigen::Vector3d t_curr(0, 0, 0);
 
@@ -127,7 +73,7 @@ int main(int argc, char **argv)
     vector<pcl::PointCloud<PointType>::Ptr> full_cloud_buf;
 
     // 记录接收到的点云scan数量
-    int plcount = 0;
+    int cloud_frame_cnt = 0;
     // 记录滑动窗口中第一帧的数量，每次边缘化后递增
     int window_base = 0;
 
@@ -135,7 +81,7 @@ int main(int argc, char **argv)
     Eigen::Vector3d delta_t(0, 0, 0);
 
     // 使用哈希网格表存储特征
-    unordered_map<VoxelStrcuture, OctoTree *> surf_map, corn_map;
+    unordered_map<VoxelStructure, OctoTree *> surf_octo_map, corn_octo_map;
 
     vector<Eigen::Quaterniond> delta_q_buf, q_buf;
     vector<Eigen::Vector3d> delta_t_buf, t_buf;
@@ -143,7 +89,9 @@ int main(int argc, char **argv)
     // 滑窗优化，用以地图细化阶段
     SlidingWindowOpti opt_lsv(window_size, filter_num, thread_num);
 
+    // surf_cloud_centor_map、corn_..._map数据，每次来一个scan就会进行更新，然后均存入八叉树中
     pcl::PointCloud<PointType> surf_cloud_centor_map, corn_cloud_centor_map;
+    // 存入数据不清空，每次有新数据存入，均进行一次下采样滤波
     pcl::PointCloud<PointType> corn_cloud_filter_map, surf_cloud_filter_map;
 
     pcl::KdTreeFLANN<PointType>::Ptr kdtree_surf(new pcl::KdTreeFLANN<PointType>());
@@ -159,16 +107,18 @@ int main(int argc, char **argv)
     double range;
     Eigen::Matrix4d trans(Eigen::Matrix4d::Identity());
     ros::Time cur_time;
-    geometry_msgs::PoseArray parray;
-    parray.header.frame_id = "laser_init";
+    geometry_msgs::PoseArray pose_array;
+    pose_array.header.frame_id = "laser_init";
     thread *map_refine_thread = nullptr;
 
     while (nh.ok())
     {
         ros::spinOnce();
 
+        localizeThread->qua_incre_ = delta_q;
+        localizeThread->trans_incre_ = delta_t;
         // 地图优化完成后，执行此操作，包含边缘化及话题发布
-        if (opt_lsv.read_refine_state() == 2)
+        if (opt_lsv.readRefineState() == 2)
         {
             ROS_INFO("After map refine . ");
             nav_msgs::Odometry laser_odom;
@@ -178,6 +128,8 @@ int main(int argc, char **argv)
             // 发布位姿固定的点云数据
             cloud_send.clear();
             ROS_INFO("The value of margi_size: %d", margi_size);
+            // 发布点云时需跳过的帧数，可以灵活调整（设置为5，太小可视化显示卡顿），依据可视化效果，这里只用在可视化上，
+            // 影响不大，若需保存全局地图，需要重新添加代码
             for (int i = 0; i < margi_size; i += pub_skip)
             {
                 ROS_INFO("Test one ...");
@@ -188,8 +140,9 @@ int main(int argc, char **argv)
 
                 cloud_send += pcloud;
             }
-            pub_func(cloud_send, pub_full, cur_time);
+            pubFunction(cloud_send, pub_full, cur_time);
 
+            // 清空所需边缘化帧的数据
             for (int i = 0; i < margi_size; i++)
             {
                 full_cloud_buf[window_base + i] = nullptr;
@@ -201,38 +154,38 @@ int main(int argc, char **argv)
                 t_buf[window_base + i] = opt_lsv.t_poses_[i];
             }
 
-            // 发布位姿
-            for (int i = window_base; i < plcount; i++)
+            // 发布位姿,在这里发布位姿array会对先前发布的数据进行更新，在rviz展示上会变化
+            for (int i = window_base; i < cloud_frame_cnt; i++)
             {
-                parray.poses[i].orientation.w = q_buf[i].w();
-                parray.poses[i].orientation.x = q_buf[i].x();
-                parray.poses[i].orientation.y = q_buf[i].y();
-                parray.poses[i].orientation.z = q_buf[i].z();
-                parray.poses[i].position.x = t_buf[i].x();
-                parray.poses[i].position.x = t_buf[i].x();
-                parray.poses[i].position.x = t_buf[i].x();
+                pose_array.poses[i].orientation.w = q_buf[i].w();
+                pose_array.poses[i].orientation.x = q_buf[i].x();
+                pose_array.poses[i].orientation.y = q_buf[i].y();
+                pose_array.poses[i].orientation.z = q_buf[i].z();
+                pose_array.poses[i].position.x = t_buf[i].x();
+                pose_array.poses[i].position.x = t_buf[i].x();
+                pose_array.poses[i].position.x = t_buf[i].x();
             }
-            pub_pose.publish(parray);
+            pub_pose.publish(pose_array);
 
             // 边缘化操作并更新网格地图
             surf_cloud_centor_map.clear();
             corn_cloud_centor_map.clear();
-            for (auto iter = surf_map.begin(); iter != surf_map.end(); ++iter)
+            for (auto iter = surf_octo_map.begin(); iter != surf_octo_map.end(); ++iter)
             {
                 if (iter->second->is2opt_)
                 {
                     iter->second->root_centors_.clear();
-                    iter->second->marginalize(0, margi_size, q_buf, t_buf, window_base, iter->second->root_centors_);
+                    iter->second->scanMarginalize(0, margi_size, q_buf, t_buf, window_base, iter->second->root_centors_);
                 }
                 surf_cloud_centor_map += iter->second->root_centors_;
             }
 
-            for (auto iter = corn_map.begin(); iter != corn_map.end(); ++iter)
+            for (auto iter = corn_octo_map.begin(); iter != corn_octo_map.end(); ++iter)
             {
                 if (iter->second->is2opt_)
                 {
                     iter->second->root_centors_.clear();
-                    iter->second->marginalize(0, margi_size, q_buf, t_buf, window_base, iter->second->root_centors_);
+                    iter->second->scanMarginalize(0, margi_size, q_buf, t_buf, window_base, iter->second->root_centors_);
                 }
                 corn_cloud_centor_map += iter->second->root_centors_;
             }
@@ -247,46 +200,46 @@ int main(int argc, char **argv)
             // 更新voxel_windows_size
             OctoTree::voxel_windows_size_ -= margi_size;
 
-            opt_lsv.free_voxel();
+            opt_lsv.releaseVoxel();
             window_base += margi_size;
-            opt_lsv.set_refine_state(0);
+            opt_lsv.setRefineState(0);
             ROS_INFO("After map refine done. ");
         }
 
         // 各特征数据读取，筛选条件
-        if (surf_buf.empty() || corn_buf.empty() || full_buf.empty())
+        if (surface_feature_buf.empty() || corner_feature_buf.empty() || combine_cloud_buf.empty())
         {
             continue;
         }
 
         mutex_data_buf.lock();
-        uint64_t time_surf = surf_buf.front()->header.stamp.toNSec();
-        uint64_t time_corn = corn_buf.front()->header.stamp.toNSec();
-        uint64_t time_full = full_buf.front()->header.stamp.toNSec();
+        uint64_t time_surf = surface_feature_buf.front()->header.stamp.toNSec();
+        uint64_t time_corn = corner_feature_buf.front()->header.stamp.toNSec();
+        uint64_t time_full = combine_cloud_buf.front()->header.stamp.toNSec();
 
         if (time_corn != time_surf)
         {
-            time_corn < time_surf ? corn_buf.pop() : surf_buf.pop();
+            time_corn < time_surf ? corner_feature_buf.pop() : surface_feature_buf.pop();
             mutex_data_buf.unlock();
             continue;
         }
         if (time_corn != time_full)
         {
-            time_corn < time_full ? corn_buf.pop() : full_buf.pop();
+            time_corn < time_full ? corner_feature_buf.pop() : combine_cloud_buf.pop();
             mutex_data_buf.unlock();
             continue;
         }
         pcl::PointCloud<PointType>::Ptr full_cloud(new pcl::PointCloud<PointType>);
 
-        cur_time = full_buf.front()->header.stamp;
+        cur_time = combine_cloud_buf.front()->header.stamp;
 
         // ROS中点云类型，转换至PCL中数据格式
-        rosmsg2ptype(*surf_buf.front(), *surf_cloud);
-        rosmsg2ptype(*corn_buf.front(), *corn_cloud);
-        rosmsg2ptype(*full_buf.front(), *full_cloud);
-        corn_buf.pop();
-        surf_buf.pop();
-        full_buf.pop();
+        rosmsgToPointtype(*surface_feature_buf.front(), *surf_cloud);
+        rosmsgToPointtype(*corner_feature_buf.front(), *corn_cloud);
+        rosmsgToPointtype(*combine_cloud_buf.front(), *full_cloud);
+        corner_feature_buf.pop();
+        surface_feature_buf.pop();
+        combine_cloud_buf.pop();
 
         // 全局雷达点数过少，丢弃该帧数据
         if (full_cloud->size() < 5000)
@@ -296,24 +249,33 @@ int main(int argc, char **argv)
         }
         full_cloud_buf.push_back(full_cloud);
         mutex_data_buf.unlock();
-        plcount++;
+        cloud_frame_cnt++;
         // 记录滑窗口中scan点云帧数量
-        OctoTree::voxel_windows_size_ = plcount - window_base;
+        OctoTree::voxel_windows_size_ = cloud_frame_cnt - window_base;
+
+        // 对corn、surf特征做矫正处理
+        if (cloud_frame_cnt > 1)
+        {
+            localizeThread->cloudDeskew(*corn_cloud);
+            localizeThread->cloudDeskew(*surf_cloud);
+        }
+
         // 对corner特征下采样
-        down_sampling_voxel(*corn_cloud, corn_filter_length);
+        downSamplingVoxel(*corn_cloud, corn_filter_length);
+        downSamplingVoxel(*surf_cloud, surf_filter_length);
 
         double time_scan2map = ros::Time::now().toSec();
         // Scan2map方式求取位姿，里程计部分
         // 当有两个scan时执行该操作，第一帧为默认初始位姿
         // 每来一个scan求取一次位姿。
-        if (plcount > accumulate_window)
+        if (cloud_frame_cnt > accumulate_window)
         {
             ROS_INFO("Run The scan2map module. ");
-            down_sampling_voxel(*surf_cloud, surf_filter_length);
 
             // 需要几帧数据初始化雷达
             // 在不同的阶段使用不同的特征数据
-            if (plcount <= scan2map_on)
+            // 将无序点云存入八叉树，后续便可基于领域的方式进行查找处理
+            if (cloud_frame_cnt <= scan2map_on)
             {
                 // 与loam建图类似
                 kdtree_surf->setInputCloud(surf_cloud_filter_map.makeShared());
@@ -336,13 +298,14 @@ int main(int argc, char **argv)
 
                 feature_size = surf_cloud->size();
                 // 采用了一种新的平面特征、线特征表示形式，同时残差计算公式也不同，简化了计算，提升了算法效果
-                // 定位分为两个阶段，依据plcount 与 scan2map_on大小关系，采用两种方法进行位姿估计
-                if (plcount <= scan2map_on)
+                // 定位分为两个阶段，依据cloud_frame_cnt 与 scan2map_on大小关系，采用两种方法进行位姿估计
+                if (cloud_frame_cnt <= scan2map_on)
                 {
                     // 与LOAM定位建图方法类似
                     for (uint i = 0; i < feature_size; i++)
                     {
                         int closest_point_num = 5;
+                        // 这里通过位姿变换是为点云的最近邻搜索提供依据
                         point_orig << (*surf_cloud)[i].x, (*surf_cloud)[i].y, (*surf_cloud)[i].z;
                         point_aft_tran = q_curr * point_orig + t_curr;
                         point_tmp.x = point_aft_tran[0];
@@ -355,7 +318,7 @@ int main(int argc, char **argv)
                          * @param[in] 选取距基准点最近点数量
                          * @param[out] 所选取点的下标
                          * @param[out] 所选点相对于基准点的距离
-                         * @return int 
+                         * @return ptr 
                          */
                         kdtree_surf->nearestKSearch(point_tmp, closest_point_num, point_search_id, point_search_sqrt_dis);
 
@@ -364,6 +327,7 @@ int main(int argc, char **argv)
                             continue;
                         }
                         // 计算平面特征的协方差矩阵
+                        // 对应于论文中计算平均点坐标及协方差矩阵A
                         Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
                         Eigen::Vector3d center_coor(0, 0, 0);
                         for (int j = 0; j < closest_point_num; j++)
@@ -379,7 +343,7 @@ int main(int argc, char **argv)
                         center_coor /= closest_point_num;
                         cov_mat -= closest_point_num * center_coor * center_coor.transpose();
                         cov_mat /= closest_point_num;
-                        // 计算特征值特征向量
+                        // 计算特征值、特征向量
                         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
                         // 对于平面特征，要求其中一个特征值明显小于其他两个，与较小特征值相对应的特征向量代表平面的法向方向；
                         // eigenvalues()[0]为较小的特征值，确保该特征协方差矩阵特征值满足要求
@@ -399,7 +363,7 @@ int main(int argc, char **argv)
                             continue;
                         }
                         // 使用中心点及方向向量来唯一表示一个平面特征
-                        sld.push_surf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                        sld.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                     }
 
                     feature_size = corn_cloud->size();
@@ -444,14 +408,18 @@ int main(int argc, char **argv)
                         centor_vec = center_coor;
                         // 对于线特征的提取，要求其中一个特征值明显大于其他两个，与最大特征值对应的特征向量表示边缘线的方向
                         direct_vector = saes.eigenvectors().col(2);
+                        // 表示距离向量
                         dist_vec = point_aft_tran - centor_vec;
                         // norm()表示返回二范数；计算公式为点到直线距离公式的向量形式。
+                        // 按照常识vector3d表示的是，三行一列的向量
+                        // direct_vector * direct_vector.transpose()为方向向量的投影矩阵，因其行列式平方和为1，
+                        // 故不需要进行归一化处理，
                         range = (dist_vec - direct_vector * direct_vector.transpose() * dist_vec).norm();
                         if (range > 1.0)
                         {
                             continue;
                         }
-                        sld.push_line(point_orig, centor_vec, direct_vector, 0.5 * (1 - 0.75 * range));
+                        sld.pushLine(point_orig, centor_vec, direct_vector, 0.5 * (1 - 0.75 * range));
                     }
                 }
                 else
@@ -490,7 +458,7 @@ int main(int argc, char **argv)
                         }
 
                         // 将点存入优化器
-                        sld.push_surf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                        sld.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                     }
 
                     // Corn特征处理
@@ -530,12 +498,12 @@ int main(int argc, char **argv)
 
                         if (range < 0.2 && sqrt(dis_record) < 1)
                         {
-                            sld.push_line(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                            sld.pushLine(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                         }
                     }
                 }
 
-                sld.damping_iter();
+                sld.dampingIter();
                 q_curr = sld.so3_pose_.unit_quaternion();
                 t_curr = sld.t_pose_;
             }
@@ -544,7 +512,7 @@ int main(int argc, char **argv)
         time_scan2map = ros::Time::now().toSec() - time_scan2map;
         // printf("Scan2map time: %lfs\n", ros::Time::now().toSec()-time_scan2map);
 
-        if (plcount <= scan2map_on)
+        if (cloud_frame_cnt <= scan2map_on)
         {
             // 激光雷达帧小于scan2map_on，提取surf_cloud_filter_map、corn_cloud_filter_map特征
             ROS_INFO("test ...");
@@ -555,12 +523,12 @@ int main(int argc, char **argv)
             surf_cloud_filter_map += cloud_send;
             pcl::transformPointCloud(*corn_cloud, cloud_send, trans);
             corn_cloud_filter_map += cloud_send;
-            down_sampling_voxel(surf_cloud_filter_map, 0.2);
-            down_sampling_voxel(corn_cloud_filter_map, 0.2);
+            downSamplingVoxel(surf_cloud_filter_map, 0.2);
+            downSamplingVoxel(corn_cloud_filter_map, 0.2);
         }
 
         // 将新的位姿放入位姿阵列
-        parray.header.stamp = cur_time;
+        pose_array.header.stamp = cur_time;
         geometry_msgs::Pose current_pose;
         current_pose.orientation.w = q_curr.w();
         current_pose.orientation.x = q_curr.x();
@@ -569,8 +537,8 @@ int main(int argc, char **argv)
         current_pose.position.x = t_curr.x();
         current_pose.position.y = t_curr.y();
         current_pose.position.z = t_curr.z();
-        parray.poses.push_back(current_pose);
-        pub_pose.publish(parray);
+        pose_array.poses.push_back(current_pose);
+        pub_pose.publish(pose_array);
 
         // 获取里程计数据，与位姿阵列使用相同的数据，注意数据格式的不同
         nav_msgs::Odometry laser_odom;
@@ -601,13 +569,14 @@ int main(int argc, char **argv)
         trans.block<3, 3>(0, 0) = q_curr.matrix();
         trans.block<3, 1>(0, 3) = t_curr;
         pcl::transformPointCloud(*full_cloud, cloud_send, trans);
-        pub_func(cloud_send, pub_test, cur_time);
+        pubFunction(cloud_send, pub_test, cur_time);
 
         // 帧数大于等于2时，获取位姿间变化量，新帧的位姿由scan2map部分计算
-        if (plcount > 1)
+        if (cloud_frame_cnt > 1)
         {
-            delta_t = q_buf[plcount - 2].matrix().transpose() * (t_curr - t_buf[plcount - 2]);
-            delta_q = q_buf[plcount - 2].matrix().transpose() * q_curr.matrix();
+            // 可理解为维护两帧数据间的位姿增量
+            delta_t = q_buf[cloud_frame_cnt - 2].matrix().transpose() * (t_curr - t_buf[cloud_frame_cnt - 2]);
+            delta_q = q_buf[cloud_frame_cnt - 2].matrix().transpose() * q_curr.matrix();
         }
 
         // 将位姿及增量放入缓存buf
@@ -616,55 +585,55 @@ int main(int argc, char **argv)
         delta_q_buf.push_back(delta_q);
         delta_t_buf.push_back(delta_t);
 
-        // 多线程运行情况下，如果计算较慢会导致超内存，10由cut_voxel决定
-        if (plcount - window_base - window_size > 10)
+        // 多线程运行情况下，如果计算较慢会导致超内存，10由cutVoxel决定
+        if (cloud_frame_cnt - window_base - window_size > 10)
         {
             printf("Out of size\n");
             exit(0);
         }
 
-        // 将当前特征点放入根体素节点
-        cut_voxel(surf_map, surf_cloud, q_curr.matrix(), t_curr, 0, plcount - 1 - window_base, window_size + 10);
-        cut_voxel(corn_map, corn_cloud, q_curr.matrix(), t_curr, 1, plcount - 1 - window_base, window_size + 10);
+        // 将边、面特征做网格划分
+        localizeThread->cutVoxel(surf_octo_map, surf_cloud, q_curr.matrix(), t_curr, 0, cloud_frame_cnt - 1 - window_base, window_size + 10);
+        localizeThread->cutVoxel(corn_octo_map, corn_cloud, q_curr.matrix(), t_curr, 1, cloud_frame_cnt - 1 - window_base, window_size + 10);
 
         // 角点特征以及平面特征的中心点
         // normal_x(yz)表示平面特征的法向量或线特征的方向向量
         surf_cloud_centor_map.clear();
         corn_cloud_centor_map.clear();
-        ROS_INFO("Test 610");
         // 新的scan被划分为对应的网格地图中，需要进一步将网格划分，直到获得对应的尺度
-        for (auto iter = surf_map.begin(); iter != surf_map.end(); ++iter)
+        // 对当前新的线、面平面特征做网格划分处理，起始层为0
+        // 对每一个特征所处的区域进行自适应划分
+        for (auto iter = surf_octo_map.begin(); iter != surf_octo_map.end(); ++iter)
         {
             if (iter->second->is2opt_)
             {
                 iter->second->root_centors_.clear();
-                iter->second->recut(0, plcount - 1 - window_base, iter->second->root_centors_);
+                // point_vec_tran_由cutVoxel函数生成
+                iter->second->recutVoxel(0, cloud_frame_cnt - 1 - window_base, iter->second->root_centors_);
             }
 
             // 添加平面中心点
             surf_cloud_centor_map += iter->second->root_centors_;
             // 可以添加一些距离约束，以防止平面中心地图过大；
             // 也可将存入网格中的点，存入八叉树中，类似于loam
-            // 也可使用 surf_map.erase(iter++)  删除网格，以节省内存空间
+            // 也可使用 surf_octo_map.erase(iter++)  删除网格，以节省内存空间
         }
-        ROS_INFO("Test 627");
-        for (auto iter = corn_map.begin(); iter != corn_map.end(); ++iter)
+        for (auto iter = corn_octo_map.begin(); iter != corn_octo_map.end(); ++iter)
         {
             if (iter->second->is2opt_)
             {
                 iter->second->root_centors_.clear();
-                iter->second->recut(0, plcount - 1 - window_base, iter->second->root_centors_);
+                iter->second->recutVoxel(0, cloud_frame_cnt - 1 - window_base, iter->second->root_centors_);
             }
             corn_cloud_centor_map += iter->second->root_centors_;
         }
-        ROS_INFO("Test 637");
         // 显示所处文件名及行号
         ROS_INFO("The name of current file is : %s", __FILE__);
         ROS_INFO("The current line number : %d", __LINE__);
         // 开启地图优化模块
-        ROS_INFO("The value of plcount: %d", plcount);
+        ROS_INFO("The value of cloud_frame_cnt: %d", cloud_frame_cnt);
         // 对位姿buf中的数据执行优化
-        if (plcount >= window_base + window_size && opt_lsv.read_refine_state() == 0)
+        if (cloud_frame_cnt >= window_base + window_size && opt_lsv.readRefineState() == 0)
         {
             ROS_INFO("Run the map refine module. ");
             for (int i = 0; i < window_size; i++)
@@ -675,34 +644,34 @@ int main(int argc, char **argv)
             // 第一个滑动窗口不做优化
             if (window_base == 0)
             {
-                opt_lsv.set_refine_state(2);
+                opt_lsv.setRefineState(2);
             }
             else
             {
                 // 将网格地图信息加入优化器
-                for (auto iter = surf_map.begin(); iter != surf_map.end(); ++iter)
+                for (auto iter = surf_octo_map.begin(); iter != surf_octo_map.end(); ++iter)
                 {
                     if (iter->second->is2opt_)
                     {
-                        iter->second->traversal_opt(opt_lsv);
+                        iter->second->traversalOpt(opt_lsv);
                     }
                 }
 
-                for (auto iter = corn_map.begin(); iter != corn_map.end(); ++iter)
+                for (auto iter = corn_octo_map.begin(); iter != corn_octo_map.end(); ++iter)
                 {
                     if (iter->second->is2opt_)
                     {
-                        iter->second->traversal_opt(opt_lsv);
+                        iter->second->traversalOpt(opt_lsv);
                     }
                 }
 
                 // 开启迭代优化
                 // 多线程优化方式， 对电脑性能要求较高
-                // map_refine_thread = new thread(&LM_SLWD_VOXEL::damping_iter, &opt_lsv);
+                // map_refine_thread = new thread(&LM_SLWD_VOXEL::dampingIter, &opt_lsv);
                 // map_refine_thread->detach();
 
                 // 非多线程
-                opt_lsv.damping_iter();
+                opt_lsv.dampingIter();
             }
         }
 

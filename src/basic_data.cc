@@ -10,8 +10,8 @@
 
 #include "basic_data.h"
 
-VoxelStrcuture::VoxelStrcuture(int64_t vx, int64_t vy, int64_t vz) : x_(vx), y_(vy), z_(vz) {
-    // ROS_INFO("Run the VoxelStrcuture function. ");
+VoxelStructure::VoxelStructure(int64_t vx, int64_t vy, int64_t vz) : x_(vx), y_(vy), z_(vz) {
+    // ROS_INFO("Run the VoxelStructure function. ");
 }
 
 SigmaVector::SigmaVector()

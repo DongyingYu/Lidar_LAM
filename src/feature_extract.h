@@ -115,6 +115,11 @@ public:
     void extractFeature();
 
     /**
+   * @brief 激光scan去畸变 TODO
+   */
+    void cloudDeskew();
+
+    /**
    * @brief 获取角点特征
    */
     pcl::PointCloud<PointType>::Ptr getCornerFeature();

@@ -17,7 +17,7 @@
 
 typedef std::vector<Eigen::Vector3d> PointVector;
 typedef pcl::PointXYZINormal PointType;
-#define MIN_PS 7
+#define MIN_POINT_SIZE 7
 
 /**
    * @brief 发布点云topic数据
@@ -27,7 +27,7 @@ typedef pcl::PointXYZINormal PointType;
    * @return void 
    */
 template <typename T>
-void pub_func(T &pl, ros::Publisher &pub, const ros::Time &current_time)
+void pubFunction(T &pl, ros::Publisher &pub, const ros::Time &current_time)
 {
   pl.height = 1;
   pl.width = pl.size();
@@ -44,25 +44,25 @@ void pub_func(T &pl, ros::Publisher &pub, const ros::Time &current_time)
    * @param[in] 网格滤波的尺寸大小
    * @return void 
    */
-void down_sampling_voxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size);
+void downSamplingVoxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size);
 
 /**
    * @brief 对点向量做网格化滤波处理
-   * @param[in] 三维点向量容器
+   * @param[in/out] 三维点向量容器
    * @param[in] 网格滤波的尺寸大小
    * @return void 
    */
-void down_sampling_voxel(PointVector &pl_feat, double voxel_size);
+void downSamplingVoxel(PointVector &pl_feat, double voxel_size);
 
 /**
-   * @brief 对特征点云做网格化滤波处理，
+   * @brief 对特征点做位姿转换
    * @param[in] 原始点坐标容器
    * @param[out] 经转换矩阵作用后的坐标容器
    * @param[in] 旋转矩阵
    * @param[in] 平移向量
    * @return void 
    */
-void plvec_trans_func(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tran, Eigen::Matrix3d R, Eigen::Vector3d t);
+void pointvecTransform(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tran, Eigen::Matrix3d R, Eigen::Vector3d t);
 
 /**
    * @brief 点云数据转换，PointCloud2-->PointType
@@ -70,4 +70,4 @@ void plvec_trans_func(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tr
    * @param[in] PCL中点云格式
    * @return void 
    */
-void rosmsg2ptype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<PointType> &plt);
+void rosmsgToPointtype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<PointType> &plt);

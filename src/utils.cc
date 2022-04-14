@@ -11,16 +11,15 @@
 #include <iostream>
 #include "utils.h"
 
-
-void down_sampling_voxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size)
+void downSamplingVoxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size)
 {
-    ROS_INFO("Run the down_sampling_voxel function 1. ");
+    ROS_INFO("Run the downSamplingVoxel function 1. ");
     if (voxel_size < 0.01)
     {
         return;
     }
 
-    unordered_map<VoxelStrcuture, PointCount> feat_map;
+    unordered_map<VoxelStructure, PointCount> feat_map;
     uint plsize = pl_feat.size();
 
     for (uint i = 0; i < plsize; i++)
@@ -36,7 +35,7 @@ void down_sampling_voxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size)
             }
         }
 
-        VoxelStrcuture position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+        VoxelStructure position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
         auto iter = feat_map.find(position);
         if (iter != feat_map.end())
         {
@@ -70,12 +69,13 @@ void down_sampling_voxel(pcl::PointCloud<PointType> &pl_feat, double voxel_size)
     }
 }
 
-void down_sampling_voxel(PointVector &pl_feat, double voxel_size)
+void downSamplingVoxel(PointVector &pl_feat, double voxel_size)
 {
-    ROS_INFO("Run the down_sampling_voxel function. ");
-    unordered_map<VoxelStrcuture, PointCount> feat_map;
+    ROS_INFO("Run the downSamplingVoxel function. ");
+    unordered_map<VoxelStructure, PointCount> feat_map;
     uint plsize = pl_feat.size();
 
+    // 借助于哈希网格查找检测以实现对数据的滤波
     for (uint i = 0; i < plsize; i++)
     {
         Eigen::Vector3d &p_c = pl_feat[i];
@@ -89,7 +89,7 @@ void down_sampling_voxel(PointVector &pl_feat, double voxel_size)
             }
         }
 
-        VoxelStrcuture position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+        VoxelStructure position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
         auto iter = feat_map.find(position);
         if (iter != feat_map.end())
         {
@@ -122,7 +122,7 @@ void down_sampling_voxel(PointVector &pl_feat, double voxel_size)
     }
 }
 
-void plvec_trans_func(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tran, Eigen::Matrix3d R, Eigen::Vector3d t)
+void pointvecTransform(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tran, Eigen::Matrix3d R, Eigen::Vector3d t)
 {
     uint orig_size = orig.size();
     tran.resize(orig_size);
@@ -134,7 +134,7 @@ void plvec_trans_func(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &tr
 }
 
 // Convert PointCloud2 to PointType
-void rosmsg2ptype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<PointType> &plt)
+void rosmsgToPointtype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<PointType> &plt)
 {
     pcl::PointCloud<pcl::PointXYZI> pl;
     pcl::fromROSMsg(pl_msg, pl);

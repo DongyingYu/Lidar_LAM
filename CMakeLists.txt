@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 find_package(PCL 1.8 REQUIRED)
 find_package(Eigen3)
+SET(OpenCV_DIR "/usr/local/opencv3410/share/OpenCV")
 find_package(OpenCV REQUIRED)
 
 catkin_package(
@@ -43,6 +44,8 @@ target_link_libraries(lidar_feature ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
 add_executable(lidar_lam 
     src/lam_ros.cc
+    src/lam_process.h
+    src/lam_process.cc
     src/third_lib.cc
     src/third_lib.h
     src/localization_and_mapping.cc
@@ -50,5 +53,7 @@ add_executable(lidar_lam
     src/utils.h
     src/basic_data.cc
     src/basic_data.h
+    src/parameters.cc
+    src/parameters.h
 )
 target_link_libraries(lidar_lam ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})

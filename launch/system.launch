@@ -8,7 +8,7 @@
 	    <remap from="/combine_cloud" to="/combine_cloud" />
     </node>
 
-    <!-- rviz文件中，将延迟时间设置非常大，可显示出地图全貌，若需保存地图，需再建立一个村塾数据的类型-->
+    <!-- rviz文件中，将延迟时间设置非常大，可显示出地图全貌，若需保存地图，需再建立一个存储数据的类型-->
     <node name="rviz" pkg="rviz" type="rviz" output="log" args="-d $(find llam)/rviz/rviz.rviz" />
 
 </launch>
