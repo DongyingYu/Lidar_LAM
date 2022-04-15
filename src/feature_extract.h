@@ -1,7 +1,7 @@
 /**
  * @file feature_extract.h
  * @author Dongying (yudong2817@sina.com)
- * @brief
+ * @brief 激光雷达数据处理及点云特征提取
  * @version 1.0
  * @date 2022-03-22
  *
@@ -47,7 +47,7 @@ void filterCloseDistance(const pcl::PointCloud<PointT> &input_cloud,
         output_cloud.points.resize(input_cloud.points.size());
     }
 
-    size_t cloud_cnt = 0;
+    size_t cloud_point_cnt = 0;
     for (size_t i = 0; i < input_cloud.points.size(); ++i)
     {
         if (input_cloud.points[i].x * input_cloud.points[i].x + input_cloud.points[i].y * input_cloud.points[i].y +
@@ -56,16 +56,16 @@ void filterCloseDistance(const pcl::PointCloud<PointT> &input_cloud,
         {
             continue;
         }
-        output_cloud.points[cloud_cnt] = input_cloud.points[i];
-        cloud_cnt++;
+        output_cloud.points[cloud_point_cnt] = input_cloud.points[i];
+        cloud_point_cnt++;
     }
 
-    if (cloud_cnt != input_cloud.points.size())
+    if (cloud_point_cnt != input_cloud.points.size())
     {
-        output_cloud.points.resize(cloud_cnt);
+        output_cloud.points.resize(cloud_point_cnt);
     }
     output_cloud.height = 1;
-    output_cloud.width = static_cast<uint32_t>(cloud_cnt);
+    output_cloud.width = static_cast<uint32_t>(cloud_point_cnt);
     output_cloud.is_dense = true;
 }
 
@@ -93,7 +93,7 @@ public:
    * @param[in] x3D 点云
    * @return void 
    */
-    void cloudDevideToScan(const pcl::PointCloud<pcl::PointXYZ> &point_cloud);
+    void cloudDivideToScan(const pcl::PointCloud<pcl::PointXYZ> &point_cloud);
 
     /**
    * @brief 返回组合点云指针

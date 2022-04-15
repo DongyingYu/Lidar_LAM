@@ -71,3 +71,12 @@ void pointvecTransform(vector<Eigen::Vector3d> &orig, vector<Eigen::Vector3d> &t
    * @return void 
    */
 void rosmsgToPointtype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<PointType> &plt);
+
+/**
+   * @brief 计算协方差矩阵
+   * @param[in] ros中接收到的PointCloud2格式数据
+   * @param[in] PCL中点云格式
+   * @return void 
+   */
+Eigen::Matrix3d computeCovMat(const pcl::PointCloud<PointType> &point_cloud, int closest_point_cnt,
+                              const vector<int> &point_search_id);

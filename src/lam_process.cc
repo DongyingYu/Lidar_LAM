@@ -156,3 +156,25 @@ void LamProcess::cloudPositionTrans(PointType const *const point_in, PointType *
     point_out->normal_y = point_in->normal_y;
     point_out->normal_z = point_in->normal_z;
 }
+
+void LamProcess::computeCovMat(const pcl::PointCloud<PointType> &point_cloud, int closest_point_cnt,
+                              const vector<int> &point_search_id)
+{
+    // 计算平面特征的协方差矩阵
+    // 对应于论文中计算平均点坐标及协方差矩阵A
+    cov_mat_ = Eigen::Matrix3d::Zero();
+    center_coor_ = Vector3d(0.0, 0.0, 0.0);
+    for (int j = 0; j < closest_point_cnt; j++)
+    {
+        Eigen::Vector3d tvec;
+        tvec[0] = point_cloud[point_search_id[j]].x;
+        tvec[1] = point_cloud[point_search_id[j]].y;
+        tvec[2] = point_cloud[point_search_id[j]].z;
+        cov_mat_ += tvec * tvec.transpose();
+        center_coor_ += tvec;
+    }
+
+    center_coor_ /= closest_point_cnt;
+    cov_mat_ -= closest_point_cnt * center_coor_ * center_coor_.transpose();
+    cov_mat_ /= closest_point_cnt;
+}

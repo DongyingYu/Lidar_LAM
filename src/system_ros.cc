@@ -26,6 +26,7 @@ void initialCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laser_cloud)
     pcl::PointCloud<pcl::PointXYZ> initial_cloud;
     pcl::fromROSMsg(*laser_cloud, initial_cloud);
     std::vector<int> indices;
+    // 移除无效点
     pcl::removeNaNFromPointCloud(initial_cloud, initial_cloud, indices);
 
     // 阈值的设置后续需提取
@@ -33,7 +34,7 @@ void initialCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laser_cloud)
     FeatureExtract::Ptr cloud_process = std::make_shared<FeatureExtract>();
     cloud_process->computeCloudYawAngle(initial_cloud);
     pcl::PointCloud<PointType> combine_cloud;
-    cloud_process->cloudDevideToScan(initial_cloud);
+    cloud_process->cloudDivideToScan(initial_cloud);
     combine_cloud = * cloud_process->getCombineCloud();
 
     int cloud_size = initial_cloud.points.size();

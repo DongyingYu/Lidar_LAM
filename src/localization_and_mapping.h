@@ -195,7 +195,7 @@ public:
 };
 
 // 用在里程计求解阶段，Scam2map optimizer
-class VoxelDistance
+class OdomVoxlDistOpti
 {
 public:
     /**

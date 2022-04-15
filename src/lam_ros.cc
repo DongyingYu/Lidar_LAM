@@ -87,9 +87,9 @@ int main(int argc, char **argv)
     vector<Eigen::Vector3d> delta_t_buf, t_buf;
 
     // 滑窗优化，用以地图细化阶段
-    SlidingWindowOpti opt_lsv(window_size, filter_num, thread_num);
+    SlidingWindowOpti slid_win_opt(window_size, filter_num, thread_num);
 
-    // surf_cloud_centor_map、corn_..._map数据，每次来一个scan就会进行更新，然后均存入八叉树中
+    // surf_cloud_centor_map、corn_..._map数据，每次来一个scan就会先做清空然后赋予新值，然后均存入八叉树中
     pcl::PointCloud<PointType> surf_cloud_centor_map, corn_cloud_centor_map;
     // 存入数据不清空，每次有新数据存入，均进行一次下采样滤波
     pcl::PointCloud<PointType> corn_cloud_filter_map, surf_cloud_filter_map;
@@ -100,7 +100,6 @@ int main(int argc, char **argv)
     pcl::PointCloud<PointType> cloud_send;
     // 原始坐标点、位姿转换后坐标点、核心位置向量 、方向向量、位姿转换后点距临近点中心的距离向量
     Eigen::Vector3d point_orig, point_aft_tran, centor_vec, direct_vector, dist_vec;
-    uint feature_size;
     PointType point_tmp;
     vector<int> point_search_id;
     vector<float> point_search_sqrt_dis;
@@ -118,7 +117,7 @@ int main(int argc, char **argv)
         localizeThread->qua_incre_ = delta_q;
         localizeThread->trans_incre_ = delta_t;
         // 地图优化完成后，执行此操作，包含边缘化及话题发布
-        if (opt_lsv.readRefineState() == 2)
+        if (slid_win_opt.readRefineState() == 2)
         {
             ROS_INFO("After map refine . ");
             nav_msgs::Odometry laser_odom;
@@ -133,11 +132,12 @@ int main(int argc, char **argv)
             for (int i = 0; i < margi_size; i += pub_skip)
             {
                 ROS_INFO("Test one ...");
-                trans.block<3, 3>(0, 0) = opt_lsv.so3_poses_[i].matrix();
-                trans.block<3, 1>(0, 3) = opt_lsv.t_poses_[i];
+                trans.block<3, 3>(0, 0) = slid_win_opt.so3_poses_[i].matrix();
+                trans.block<3, 1>(0, 3) = slid_win_opt.t_poses_[i];
                 pcl::PointCloud<PointType> pcloud;
+                // 每隔pub_skip帧将当前的full_cloud_buf中的某帧发出，发出帧经过其位姿转换，否则其位姿是不确定的
                 pcl::transformPointCloud(*full_cloud_buf[window_base + i], pcloud, trans);
-
+                // 将位姿转化后的点云帧叠加
                 cloud_send += pcloud;
             }
             pubFunction(cloud_send, pub_full, cur_time);
@@ -150,8 +150,9 @@ int main(int argc, char **argv)
 
             for (int i = 0; i < window_size; i++)
             {
-                q_buf[window_base + i] = opt_lsv.so3_poses_[i].unit_quaternion();
-                t_buf[window_base + i] = opt_lsv.t_poses_[i];
+                // 这里unit_quaternion()含义，通过数据测试一下
+                q_buf[window_base + i] = slid_win_opt.so3_poses_[i].unit_quaternion();
+                t_buf[window_base + i] = slid_win_opt.t_poses_[i];
             }
 
             // 发布位姿,在这里发布位姿array会对先前发布的数据进行更新，在rviz展示上会变化
@@ -200,9 +201,9 @@ int main(int argc, char **argv)
             // 更新voxel_windows_size
             OctoTree::voxel_windows_size_ -= margi_size;
 
-            opt_lsv.releaseVoxel();
+            slid_win_opt.releaseVoxel();
             window_base += margi_size;
-            opt_lsv.setRefineState(0);
+            slid_win_opt.setRefineState(0);
             ROS_INFO("After map refine done. ");
         }
 
@@ -253,7 +254,7 @@ int main(int argc, char **argv)
         // 记录滑窗口中scan点云帧数量
         OctoTree::voxel_windows_size_ = cloud_frame_cnt - window_base;
 
-        // 对corn、surf特征做矫正处理
+        // 对corn、surf特征做矫正处理, 甚至说不做矫正，最后的path看起来更重合
         if (cloud_frame_cnt > 1)
         {
             localizeThread->cloudDeskew(*corn_cloud);
@@ -277,7 +278,7 @@ int main(int argc, char **argv)
             // 将无序点云存入八叉树，后续便可基于领域的方式进行查找处理
             if (cloud_frame_cnt <= scan2map_on)
             {
-                // 与loam建图类似
+                // 与loam建图类似,setInputCloud()函数在执行是会把八叉树中已有数据清空
                 kdtree_surf->setInputCloud(surf_cloud_filter_map.makeShared());
                 kdtree_corn->setInputCloud(corn_cloud_filter_map.makeShared());
             }
@@ -289,12 +290,13 @@ int main(int argc, char **argv)
             }
 
             // 两次迭代求取位姿：q_curr,t_curr
-            for (int itercount = 0; itercount < 2; itercount++)
+            uint feature_size;
+            for (int iter_cnt = 0; iter_cnt < 2; iter_cnt++)
             {
                 // 采用LM优化算法，依据最近距离做判定
-                VoxelDistance sld;
-                sld.so3_pose_.setQuaternion(q_curr);
-                sld.t_pose_ = t_curr;
+                OdomVoxlDistOpti odom_vox_opt;
+                odom_vox_opt.so3_pose_.setQuaternion(q_curr);
+                odom_vox_opt.t_pose_ = t_curr;
 
                 feature_size = surf_cloud->size();
                 // 采用了一种新的平面特征、线特征表示形式，同时残差计算公式也不同，简化了计算，提升了算法效果
@@ -328,23 +330,9 @@ int main(int argc, char **argv)
                         }
                         // 计算平面特征的协方差矩阵
                         // 对应于论文中计算平均点坐标及协方差矩阵A
-                        Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
-                        Eigen::Vector3d center_coor(0, 0, 0);
-                        for (int j = 0; j < closest_point_num; j++)
-                        {
-                            Eigen::Vector3d tvec;
-                            tvec[0] = surf_cloud_filter_map[point_search_id[j]].x;
-                            tvec[1] = surf_cloud_filter_map[point_search_id[j]].y;
-                            tvec[2] = surf_cloud_filter_map[point_search_id[j]].z;
-                            cov_mat += tvec * tvec.transpose();
-                            center_coor += tvec;
-                        }
-
-                        center_coor /= closest_point_num;
-                        cov_mat -= closest_point_num * center_coor * center_coor.transpose();
-                        cov_mat /= closest_point_num;
+                        localizeThread->computeCovMat(surf_cloud_filter_map, closest_point_num, point_search_id);
                         // 计算特征值、特征向量
-                        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
+                        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(localizeThread->cov_mat_);
                         // 对于平面特征，要求其中一个特征值明显小于其他两个，与较小特征值相对应的特征向量代表平面的法向方向；
                         // eigenvalues()[0]为较小的特征值，确保该特征协方差矩阵特征值满足要求
                         if (saes.eigenvalues()[2] < 25 * saes.eigenvalues()[0])
@@ -352,7 +340,7 @@ int main(int argc, char **argv)
                             continue;
                         }
 
-                        centor_vec = center_coor;
+                        centor_vec = localizeThread->center_coor_;
                         // 平面方向向量
                         direct_vector = saes.eigenvectors().col(0);
                         // 进行矩阵点乘，依据点到平面距离公式，简化计算判定参数
@@ -363,7 +351,7 @@ int main(int argc, char **argv)
                             continue;
                         }
                         // 使用中心点及方向向量来唯一表示一个平面特征
-                        sld.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                        odom_vox_opt.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                     }
 
                     feature_size = corn_cloud->size();
@@ -383,29 +371,15 @@ int main(int argc, char **argv)
                             continue;
                         }
 
-                        Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
-                        Eigen::Vector3d center_coor(0, 0, 0);
-                        // 计算corner特征协方差矩阵
-                        for (int j = 0; j < closest_point_num; j++)
-                        {
-                            Eigen::Vector3d tvec;
-                            tvec[0] = corn_cloud_filter_map[point_search_id[j]].x;
-                            tvec[1] = corn_cloud_filter_map[point_search_id[j]].y;
-                            tvec[2] = corn_cloud_filter_map[point_search_id[j]].z;
-                            cov_mat += tvec * tvec.transpose();
-                            center_coor += tvec;
-                        }
-                        center_coor /= closest_point_num;
-                        cov_mat -= closest_point_num * center_coor * center_coor.transpose();
-                        cov_mat /= closest_point_num;
-                        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov_mat);
+                        localizeThread->computeCovMat(corn_cloud_filter_map, closest_point_num, point_search_id);
+                        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(localizeThread->cov_mat_);
                         // 确保eigenvalues()[2]足够大，才可进行后续运算
                         if (saes.eigenvalues()[2] < 4 * saes.eigenvalues()[1])
                         {
                             continue;
                         }
 
-                        centor_vec = center_coor;
+                        centor_vec = localizeThread->center_coor_;
                         // 对于线特征的提取，要求其中一个特征值明显大于其他两个，与最大特征值对应的特征向量表示边缘线的方向
                         direct_vector = saes.eigenvectors().col(2);
                         // 表示距离向量
@@ -419,7 +393,7 @@ int main(int argc, char **argv)
                         {
                             continue;
                         }
-                        sld.pushLine(point_orig, centor_vec, direct_vector, 0.5 * (1 - 0.75 * range));
+                        odom_vox_opt.pushLine(point_orig, centor_vec, direct_vector, 0.5 * (1 - 0.75 * range));
                     }
                 }
                 else
@@ -447,6 +421,8 @@ int main(int argc, char **argv)
                         {
                             PointType &point_select = surf_cloud_centor_map[point_search_id[j]];
                             Eigen::Vector3d center_coor(point_select.x, point_select.y, point_select.z);
+                            // 这里normal参数右后续ter->second->root_centors_传入，root_centors_为XYZINormal格式
+                            // 由reCutVoxel中cal_eigen()函数计算
                             Eigen::Vector3d direct(point_select.normal_x, point_select.normal_y, point_select.normal_z);
                             double dista = fabs(direct.dot(point_aft_tran - center_coor));
                             if (dista <= range && point_search_sqrt_dis[j] < 4.0)
@@ -458,7 +434,7 @@ int main(int argc, char **argv)
                         }
 
                         // 将点存入优化器
-                        sld.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                        odom_vox_opt.pushSurf(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                     }
 
                     // Corn特征处理
@@ -498,18 +474,19 @@ int main(int argc, char **argv)
 
                         if (range < 0.2 && sqrt(dis_record) < 1)
                         {
-                            sld.pushLine(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
+                            odom_vox_opt.pushLine(point_orig, centor_vec, direct_vector, (1 - 0.75 * range));
                         }
                     }
                 }
 
-                sld.dampingIter();
-                q_curr = sld.so3_pose_.unit_quaternion();
-                t_curr = sld.t_pose_;
+                odom_vox_opt.dampingIter();
+                q_curr = odom_vox_opt.so3_pose_.unit_quaternion();
+                t_curr = odom_vox_opt.t_pose_;
             }
         }
         // 统计优化执行耗时
         time_scan2map = ros::Time::now().toSec() - time_scan2map;
+        // 
         // printf("Scan2map time: %lfs\n", ros::Time::now().toSec()-time_scan2map);
 
         if (cloud_frame_cnt <= scan2map_on)
@@ -633,18 +610,18 @@ int main(int argc, char **argv)
         // 开启地图优化模块
         ROS_INFO("The value of cloud_frame_cnt: %d", cloud_frame_cnt);
         // 对位姿buf中的数据执行优化
-        if (cloud_frame_cnt >= window_base + window_size && opt_lsv.readRefineState() == 0)
+        if (cloud_frame_cnt >= window_base + window_size && slid_win_opt.readRefineState() == 0)
         {
             ROS_INFO("Run the map refine module. ");
             for (int i = 0; i < window_size; i++)
             {
-                opt_lsv.so3_poses_[i].setQuaternion(q_buf[window_base + i]);
-                opt_lsv.t_poses_[i] = t_buf[window_base + i];
+                slid_win_opt.so3_poses_[i].setQuaternion(q_buf[window_base + i]);
+                slid_win_opt.t_poses_[i] = t_buf[window_base + i];
             }
             // 第一个滑动窗口不做优化
             if (window_base == 0)
             {
-                opt_lsv.setRefineState(2);
+                slid_win_opt.setRefineState(2);
             }
             else
             {
@@ -653,7 +630,7 @@ int main(int argc, char **argv)
                 {
                     if (iter->second->is2opt_)
                     {
-                        iter->second->traversalOpt(opt_lsv);
+                        iter->second->traversalOpt(slid_win_opt);
                     }
                 }
 
@@ -661,17 +638,17 @@ int main(int argc, char **argv)
                 {
                     if (iter->second->is2opt_)
                     {
-                        iter->second->traversalOpt(opt_lsv);
+                        iter->second->traversalOpt(slid_win_opt);
                     }
                 }
 
                 // 开启迭代优化
                 // 多线程优化方式， 对电脑性能要求较高
-                // map_refine_thread = new thread(&LM_SLWD_VOXEL::dampingIter, &opt_lsv);
+                // map_refine_thread = new thread(&LM_SLWD_VOXEL::dampingIter, &slid_win_opt);
                 // map_refine_thread->detach();
 
                 // 非多线程
-                opt_lsv.dampingIter();
+                slid_win_opt.dampingIter();
             }
         }
 

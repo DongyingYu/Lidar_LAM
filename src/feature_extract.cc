@@ -1,7 +1,7 @@
 /**
  * @file feature_extract.cc
  * @author Dongying (yudong2817@sina.com)
- * @brief
+ * @brief 激光雷达数据处理及点云特征提取
  * @version 1.0
  * @date 2022-03-22
  *
@@ -34,6 +34,7 @@ void FeatureExtract::computeCloudYawAngle(const pcl::PointCloud<pcl::PointXYZ> &
     ROS_INFO("Run the computeCloudYawAngle function. ");
     int cloud_size = point_cloud.points.size();
     float start_angle = -std::atan2(point_cloud.points[0].y, point_cloud.points[0].x);
+    // 最初计算出的end_angle值，相比于初始角度，一定是相差: 2 * pi
     float end_angle = -std::atan2(point_cloud.points[cloud_size - 1].y, point_cloud.points[cloud_size - 1].x) + 2 * M_PI;
 
     // end_angle start_angle
@@ -51,15 +52,16 @@ void FeatureExtract::computeCloudYawAngle(const pcl::PointCloud<pcl::PointXYZ> &
     end_angle_ = end_angle;
 }
 
-void FeatureExtract::cloudDevideToScan(const pcl::PointCloud<pcl::PointXYZ> &point_cloud)
+void FeatureExtract::cloudDivideToScan(const pcl::PointCloud<pcl::PointXYZ> &point_cloud)
 {
-    ROS_INFO("Run the cloudDevideToScan function. ");
+    ROS_INFO("Run the cloudDivideToScan function. ");
     int cloud_size = point_cloud.points.size();
+    // 统计有效点云数据数量
     int cnt = cloud_size;
     PointType point;
     // 对整体点云按照单独的scan做划分
     std::vector<pcl::PointCloud<PointType>> cloud_scan(num_scan);
-    // 具体含义有序需测试
+    // 具体含义有需测试
     bool half_scan_flag = false;
     for (int i = 0; i < cloud_size; ++i)
     {
@@ -112,6 +114,7 @@ void FeatureExtract::cloudDevideToScan(const pcl::PointCloud<pcl::PointXYZ> &poi
         float cur_angle = -std::atan2(point.y, point.x);
         if (!half_scan_flag)
         {
+            // 当前角度与起始角度间关系
             if (cur_angle < start_angle_ - M_PI / 2)
             {
                 cur_angle += 2 * M_PI;
@@ -292,6 +295,7 @@ void FeatureExtract::extractFeature()
                     // 对该点周围点以曲率为判别依据进行选取；
                     for (int l = 1; l <= 5; ++l)
                     {
+                        // 对以曲率选出点的邻域依据曲率做出判断，其邻域点不一定是特征
                         float diff_x = combine_cloud_->points[index + l].x - combine_cloud_->points[index + l - 1].x;
                         float diff_y = combine_cloud_->points[index + l].y - combine_cloud_->points[index + l - 1].y;
                         float diff_z = combine_cloud_->points[index + l].z - combine_cloud_->points[index + l - 1].z;
@@ -345,6 +349,7 @@ void FeatureExtract::cloudDeskew() {}
 
 pcl::PointCloud<PointType>::Ptr FeatureExtract::getCornerFeature()
 {
+    // 返回局部变量指针，因局部指针指与吸纳前指针为同一个，故不会报错
     pcl::PointCloud<PointType>::Ptr corner_features;
     std::unique_lock<std::mutex> lock(mutex_features_);
     corner_features = corner_feature_sharp_;

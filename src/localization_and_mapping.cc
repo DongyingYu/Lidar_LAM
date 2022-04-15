@@ -814,7 +814,7 @@ void OctoTree::traversalOpt(SlidingWindowOpti &opt_lsv)
     }
 }
 
-void VoxelDistance::pushSurf(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff)
+void OdomVoxlDistOpti::pushSurf(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff)
 {
     direct.normalize();
     surf_direct_.push_back(direct);
@@ -823,7 +823,7 @@ void VoxelDistance::pushSurf(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eig
     surf_coeffs_.push_back(coeff);
 }
 
-void VoxelDistance::pushLine(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff)
+void OdomVoxlDistOpti::pushLine(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eigen::Vector3d &direct, double coeff)
 {
     direct.normalize();
     corn_direct_.push_back(direct);
@@ -832,7 +832,7 @@ void VoxelDistance::pushLine(Eigen::Vector3d &orip, Eigen::Vector3d &centor, Eig
     corn_coeffs_.push_back(coeff);
 }
 
-void VoxelDistance::evaluateParameters(SO3 &so3_p, Eigen::Vector3d &t_p, Eigen::Matrix<double, 6, 6> &Hess, Eigen::Matrix<double, 6, 1> &g, double &residual)
+void OdomVoxlDistOpti::evaluateParameters(SO3 &so3_p, Eigen::Vector3d &t_p, Eigen::Matrix<double, 6, 6> &Hess, Eigen::Matrix<double, 6, 1> &g, double &residual)
 {
     Hess.setZero();
     g.setZero();
@@ -890,7 +890,7 @@ void VoxelDistance::evaluateParameters(SO3 &so3_p, Eigen::Vector3d &t_p, Eigen::
     }
 }
 
-void VoxelDistance::evaluateOnlyResidual(SO3 &so3_p, Eigen::Vector3d &t_p, double &residual)
+void OdomVoxlDistOpti::evaluateOnlyResidual(SO3 &so3_p, Eigen::Vector3d &t_p, double &residual)
 {
     residual = 0;
     uint a_size = surf_gather_.size();
@@ -920,7 +920,7 @@ void VoxelDistance::evaluateOnlyResidual(SO3 &so3_p, Eigen::Vector3d &t_p, doubl
     }
 }
 
-void VoxelDistance::dampingIter()
+void OdomVoxlDistOpti::dampingIter()
 {
     double u = 0.01, v = 2;
     Eigen::Matrix<double, 6, 6> D;
