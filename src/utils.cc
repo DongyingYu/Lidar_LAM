@@ -150,3 +150,25 @@ void rosmsgToPointtype(const sensor_msgs::PointCloud2 &pl_msg, pcl::PointCloud<P
         plt[i].intensity = pl[i].intensity;
     }
 }
+
+Eigen::Matrix3d computeCovMat(const pcl::PointCloud<PointType> &point_cloud, int closest_point_cnt,
+                              const vector<int> &point_search_id)
+{
+    // 计算平面特征的协方差矩阵
+    // 对应于论文中计算平均点坐标及协方差矩阵A
+    Eigen::Matrix3d cov_mat(Eigen::Matrix3d::Zero());
+    Eigen::Vector3d center_coor(0, 0, 0);
+    for (int j = 0; j < closest_point_cnt; j++)
+    {
+        Eigen::Vector3d tvec;
+        tvec[0] = point_cloud[point_search_id[j]].x;
+        tvec[1] = point_cloud[point_search_id[j]].y;
+        tvec[2] = point_cloud[point_search_id[j]].z;
+        cov_mat += tvec * tvec.transpose();
+        center_coor += tvec;
+    }
+
+    center_coor /= closest_point_cnt;
+    cov_mat -= closest_point_cnt * center_coor * center_coor.transpose();
+    cov_mat /= closest_point_cnt;
+}

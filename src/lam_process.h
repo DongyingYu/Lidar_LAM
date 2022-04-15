@@ -37,25 +37,35 @@ public:
                   Eigen::Matrix3d R_p, Eigen::Vector3d t_p, int feattype, int fnum, int capacity);
 
     /**
-   * @brief 激光scan去畸变,将所有点云转换到起始点坐标系下 
+   * @brief 激光scan去畸变,将所有点云转换到起始点坐标系下(针对单点) 
    * @param[in] 输入点云，其指向的指针和指向的内容均不能被修改
    * @param[out] 转换后输出点云
    */
     void cloudDeskew(PointType const *const point_in, PointType *const point_out);
 
     /**
-   * @brief 激光scan去畸变,将所有点云转换到起始点坐标系下 
+   * @brief 激光scan去畸变,将所有点云转换到起始点坐标系下(针对整个scan) 
    * @param[in/out] 输入/输出点云
    */
     void cloudDeskew(pcl::PointCloud<PointType> &point_in);
 
     /**
-   * @brief 将当前激光雷达scan转换到下一帧雷达的起始位置
+   * @brief 将当前激光雷达scan转换到下一帧雷达的起始位置(针对单点)
    * @note 初步去畸变之后最后的path轨迹贴合更为紧凑，说明有效果，在去畸变策略上可思考如何更好
    * @param[in] 输入点云，其指向的指针和指向的内容均不能被修改
    * @param[out] 转换后输出点云
    */
     void cloudPositionTrans(PointType const *const point_in, PointType *const point_out);
+
+    /**
+   * @brief 计算协方差矩阵
+   * @param[in] 特征数据
+   * @param[in] 最近邻点个数
+   * @param[in] 存放最近邻点id的容器
+   * @return void 
+   */
+    void computeCovMat(const pcl::PointCloud<PointType> &point_cloud, int closest_point_cnt,
+                       const vector<int> &point_search_id);
 
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -69,6 +79,12 @@ public:
     // 参考:http://www.javashuo.com/article/p-uqyrhqcs-nw.html
     Eigen::Quaterniond qua_incre_;
     Eigen::Vector3d trans_incre_;
+
+    // 初始化赋值方式
+    // Eigen::Matrix3d cov_mat_ = Eigen::Matrix3d::Zero();;
+    // Eigen::Vector3d center_coor_ = Vector3d(0.0, 0.0, 0.0);
+    Eigen::Matrix3d cov_mat_;
+    Eigen::Vector3d center_coor_;
 
 private:
     /**
